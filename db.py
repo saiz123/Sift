@@ -103,12 +103,22 @@ def get_alert(alert_id):
         return dict(row) if row else None
 
 
-def list_alerts(verdict_filter=None, limit=200):
+def list_alerts(verdict_filter=None, q=None, limit=200):
     query = "SELECT * FROM alerts"
+    clauses = []
     params = []
     if verdict_filter:
-        query += " WHERE verdict = ?"
+        clauses.append("verdict = ?")
         params.append(verdict_filter)
+    if q:
+        clauses.append(
+            "(rule_id LIKE ? OR rule_desc LIKE ? OR target LIKE ?"
+            " OR src_ip LIKE ? OR src_user LIKE ?)"
+        )
+        like = f"%{q}%"
+        params.extend([like] * 5)
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
     query += " ORDER BY id DESC LIMIT ?"
     params.append(limit)
     with connect() as conn:
@@ -142,6 +152,26 @@ def count_recent_duplicates(rule_id, src_ip, window_hours):
             (rule_id, src_ip, cutoff),
         ).fetchone()
     return row["n"]
+
+
+def user_source_history(src_user, src_ip):
+    """
+    How many prior alerts mention this user, and has this user + source IP
+    combination been seen before? Used by the "unfamiliar source" signal.
+    """
+    if not src_user:
+        return {"total": 0, "seen_this_ip": False}
+    with connect() as conn:
+        total = conn.execute(
+            "SELECT COUNT(*) AS n FROM alerts WHERE src_user = ?", (src_user,)
+        ).fetchone()["n"]
+        seen_this_ip = False
+        if src_ip:
+            seen_this_ip = conn.execute(
+                "SELECT COUNT(*) AS n FROM alerts WHERE src_user = ? AND src_ip = ?",
+                (src_user, src_ip),
+            ).fetchone()["n"] > 0
+    return {"total": total, "seen_this_ip": seen_this_ip}
 
 
 # --- the learning loop ----------------------------------------------------

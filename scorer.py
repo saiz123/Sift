@@ -43,6 +43,7 @@ def _build_context(alert):
         ),
         "ip_intel": enrich.check_ip(alert.get("src_ip")),
         "hash_intel": enrich.check_hash(alert.get("file_hash")),
+        "user_history": db.user_source_history(alert.get("src_user"), alert.get("src_ip")),
     }
 
 

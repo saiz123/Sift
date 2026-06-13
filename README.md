@@ -73,7 +73,7 @@ reason. The points are summed into a score, and the score picks the verdict.
 That's the whole model — deliberately simple, because the value is in the
 transparency, not in cleverness you can't audit.
 
-### The signals (v1)
+### The signals
 
 | Signal | Effect | Why |
 | --- | --- | --- |
@@ -82,9 +82,12 @@ transparency, not in cleverness you can't audit.
 | Malicious source IP | `+50` | AbuseIPDB flagged the source *(needs key)* |
 | Malicious file hash | `+50` | VirusTotal flagged the file *(needs key)* |
 | Outside business hours | `+15` | activity at an unusual time |
+| Unfamiliar source for user | `+25` | this user has never alerted from this IP before |
 | Historically noisy rule | up to `−45` | analysts keep marking this rule a false alarm |
 | Repeated noise | `−20` | a flood of identical alerts (scanner-like) |
 | Trusted source | `−60` | the source IP is on your allowlist |
+| Trusted user | `−40` | the user is on your allowlist (e.g. a service account) |
+| Trusted file hash | `−40` | the hash is on your allowlist (e.g. an internal tool) |
 
 Every number lives in [`config.py`](config.py). Tune them to your environment.
 
@@ -154,7 +157,8 @@ Everything tunable is in [`config.py`](config.py), commented:
 - `JUNK_BELOW` / `ESCALATE_AT` — the two thresholds between the three buckets
 - `WEIGHTS` — how many points each signal is worth
 - `CRITICAL_ASSETS` — substrings that mark a target as critical
-- `ALLOWLIST_IPS` — trusted IPs and CIDR ranges
+- `ALLOWLIST_IPS` / `ALLOWLIST_USERS` / `ALLOWLIST_HASHES` — trusted IPs
+  (or CIDR ranges), usernames, and file hashes
 - `BUSINESS_START` / `BUSINESS_END` — your local business hours
 - duplicate-flood and track-record thresholds
 
@@ -182,20 +186,25 @@ sample_alerts/   three alerts that land in each of the three buckets
 ## Roadmap
 
 v1 deliberately does one thing well: explainable, learning triage on top of a
-single SIEM. Natural next steps, roughly in order:
+single SIEM. Every roadmap item is held to the same bar as v1: **no AI model,
+no third-party API, no ongoing cost** — sift's signals and learning loop are
+built entirely from data it already has (the alert itself and its own
+history), so it works identically on an air-gapped box as it does online.
+That's also sift's answer to the wave of "AI SOC analyst" products: explainable
+and free to run, not a closed box with a per-alert bill. Natural next steps,
+roughly in order:
 
-- **Bulk actions & queue ergonomics** — keyboard-driven triage, filter by
-  asset/rule/age, snooze.
-- **More signals** — geo/ASN velocity, identity context (new device, impossible
-  travel), threat-intel beyond two feeds, allowlists for users and hashes.
+- **Bulk actions & queue ergonomics** — the dashboard now has a search box
+  (filter by rule, target, source IP, or user, combinable with the verdict
+  chips); keyboard-driven triage, age filters, and snooze are still open.
+- **More signals** — identity context (a user alerting from a source IP sift
+  has never seen them use before) and allowlists for users/hashes are in.
+  Still open: geo/ASN velocity, threat-intel beyond two feeds.
 - **More sources** — Suricata, Elastic, GuardDuty, M365 — each a new normaliser.
 - **Outbound actions** — push verdicts back to TheHive / a ticketing system,
   notify chat; keep the human in the loop for anything destructive.
 - **Smarter noisy-rule modelling** — confidence intervals on the track record,
   per-asset rule tuning, drift alerts when a quiet rule turns noisy.
-- **An optional reasoning layer** — let an LLM draft the *narrative* of an
-  investigation while the score and the receipt stay deterministic and
-  auditable. Transparency first; AI as an assistant, never the unaccountable judge.
 
 Contributions welcome — the codebase is small on purpose so a new signal or a
 new SIEM is an afternoon, not a project.

@@ -47,7 +47,9 @@ a { color:inherit; text-decoration:none; }
 .back:hover { color:var(--accent); }
 
 /* summary chips */
-.chips { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:22px; }
+.toolbar { display:flex; justify-content:space-between; align-items:flex-start;
+  flex-wrap:wrap; gap:14px; margin-bottom:22px; }
+.chips { display:flex; gap:10px; flex-wrap:wrap; }
 .chip { display:flex; align-items:baseline; gap:8px; padding:10px 14px;
   background:var(--slate-850); border:1px solid var(--line); border-radius:8px;
   font-size:13px; color:var(--muted); }
@@ -57,6 +59,16 @@ a { color:inherit; text-decoration:none; }
 .chip.escalate .n { color:var(--escalate); }
 .chip.review .n { color:var(--review); }
 .chip.junk .n { color:var(--junk); }
+
+/* search */
+.search { display:flex; gap:8px; align-items:center; }
+.search input[type=search] { font-family:var(--mono); font-size:13px;
+  padding:9px 12px; border-radius:8px; border:1px solid var(--line);
+  background:var(--slate-850); color:var(--text); min-width:220px; }
+.search input[type=search]::placeholder { color:var(--faint); }
+.search input[type=search]:focus { outline:2px solid var(--accent); outline-offset:-1px; }
+.search .clear { font-family:var(--mono); font-size:12px; color:var(--muted); white-space:nowrap; }
+.search .clear:hover { color:var(--accent); }
 
 /* table */
 .table-wrap { overflow-x:auto; border:1px solid var(--line); border-radius:10px; }
@@ -197,7 +209,7 @@ def _masthead(show_back=False):
     )
 
 
-def render_dashboard(alerts, counts, active_filter):
+def render_dashboard(alerts, counts, active_filter, q=None):
     chips = []
     chip_defs = [
         (None, "all", sum(counts.values()), ""),
@@ -212,6 +224,17 @@ def render_dashboard(alerts, counts, active_filter):
             f'<a class="chip {cls}{active}" href="{href}">'
             f'<span class="n">{n}</span> {label}</a>'
         )
+
+    clear_href = "/" if active_filter is None else "/?verdict=" + active_filter
+    search = (
+        '<form class="search" method="get" action="/">'
+        + (f'<input type="hidden" name="verdict" value="{_esc(active_filter)}">' if active_filter else "")
+        + '<input type="search" name="q" placeholder="filter by rule, target, IP, user…"'
+        + f' value="{_esc(q or "")}">'
+        + '<button class="btn" type="submit">Filter</button>'
+        + (f'<a class="clear" href="{clear_href}">clear</a>' if q else "")
+        + "</form>"
+    )
 
     if alerts:
         rows = []
@@ -235,6 +258,13 @@ def render_dashboard(alerts, counts, active_filter):
             "<th style=\"text-align:right\">Score</th><th>Verdict</th>"
             "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>"
         )
+    elif q or active_filter:
+        table = (
+            '<div class="table-wrap"><div class="empty">No alerts match this filter.<br><br>'
+            f'Try <a href="{clear_href}">clearing the search</a>'
+            + (f' or the <code>{_esc(active_filter)}</code> filter' if active_filter else "")
+            + "</div></div>"
+        )
     else:
         table = (
             '<div class="table-wrap"><div class="empty">No alerts yet.<br><br>'
@@ -243,7 +273,8 @@ def render_dashboard(alerts, counts, active_filter):
             "</div></div>"
         )
 
-    body = _masthead() + '<div class="chips">' + "".join(chips) + "</div>" + table
+    toolbar = '<div class="toolbar"><div class="chips">' + "".join(chips) + "</div>" + search + "</div>"
+    body = _masthead() + toolbar + table
     return page("sift — triage queue", body)
 
 

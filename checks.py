@@ -115,6 +115,24 @@ def check_off_hours(alert, ctx):
     )
 
 
+def check_new_source_for_user(alert, ctx):
+    user = alert.get("src_user")
+    ip = alert.get("src_ip")
+    if not user or not ip:
+        return None
+    history = ctx.get("user_history") or {}
+    if history.get("total", 0) < config.MIN_OBSERVATIONS_FOR_USER_HISTORY:
+        return None
+    if history.get("seen_this_ip"):
+        return None
+    return _line(
+        "Unfamiliar source for user",
+        config.WEIGHTS["new_source_for_user"],
+        f"'{user}' has never alerted from {ip} before "
+        f"(seen from other sources in {history['total']} prior alerts)",
+    )
+
+
 def check_allowlisted_ip(alert, ctx):
     ip = alert.get("src_ip")
     if ip and _ip_in_list(ip, config.ALLOWLIST_IPS):
@@ -122,6 +140,34 @@ def check_allowlisted_ip(alert, ctx):
             "Trusted source",
             config.WEIGHTS["allowlisted_ip"],
             f"{ip} is on the allowlist",
+        )
+    return None
+
+
+def check_allowlisted_user(alert, ctx):
+    user = alert.get("src_user")
+    if not user:
+        return None
+    allowed = {u.lower() for u in config.ALLOWLIST_USERS}
+    if user.lower() in allowed:
+        return _line(
+            "Trusted user",
+            config.WEIGHTS["allowlisted_user"],
+            f"'{user}' is on the user allowlist",
+        )
+    return None
+
+
+def check_allowlisted_hash(alert, ctx):
+    file_hash = alert.get("file_hash")
+    if not file_hash:
+        return None
+    allowed = {h.lower() for h in config.ALLOWLIST_HASHES}
+    if file_hash.lower() in allowed:
+        return _line(
+            "Trusted file hash",
+            config.WEIGHTS["allowlisted_hash"],
+            f"{file_hash} is on the hash allowlist",
         )
     return None
 
@@ -166,7 +212,10 @@ ALL_CHECKS = [
     check_bad_ip,
     check_bad_hash,
     check_off_hours,
+    check_new_source_for_user,
     check_noisy_rule,
     check_duplicate_flood,
     check_allowlisted_ip,
+    check_allowlisted_user,
+    check_allowlisted_hash,
 ]

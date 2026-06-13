@@ -42,8 +42,20 @@ WEIGHTS = {
     # The activity happened outside business hours.
     "off_hours": 15,
 
+    # This user has alerts in sift's history, but never from this source IP —
+    # could be a new device, could be a stolen credential used elsewhere.
+    "new_source_for_user": 25,
+
     # The source IP is on your trusted allowlist — strong pull toward junk.
     "allowlisted_ip": -60,
+
+    # The source user is on your trusted allowlist (e.g. a known service
+    # account) — strong pull toward junk.
+    "allowlisted_user": -40,
+
+    # The file hash is on your trusted allowlist (e.g. a known-good internal
+    # tool) — strong pull toward junk.
+    "allowlisted_hash": -40,
 
     # Maximum penalty for a rule that is historically almost always a false
     # alarm. The actual penalty scales with the rule's false-positive rate,
@@ -73,6 +85,23 @@ ALLOWLIST_IPS = [
 ]
 
 # ---------------------------------------------------------------------------
+# Usernames you trust even when they trigger noisy rules — e.g. service
+# accounts or scanners that legitimately do unusual things. Case-insensitive.
+# ---------------------------------------------------------------------------
+ALLOWLIST_USERS = [
+    # "svc-backup",
+    # "vuln-scanner",
+]
+
+# ---------------------------------------------------------------------------
+# File hashes you trust — e.g. an internal tool that AV/EDR sometimes flags.
+# Any algorithm (md5/sha1/sha256), matched case-insensitively.
+# ---------------------------------------------------------------------------
+ALLOWLIST_HASHES = [
+    # "44d88612fea8a8f36de82e1278abb02f",
+]
+
+# ---------------------------------------------------------------------------
 # Local business hours, 24-hour clock, in the server's local time.
 # Used by the off-hours signal.
 # ---------------------------------------------------------------------------
@@ -90,6 +119,10 @@ DUPLICATE_FLOOD_COUNT = 50
 # A rule needs at least this many past decisions before its track record is
 # trusted enough to penalise it. Stops a single early mistake from muting it.
 MIN_OBSERVATIONS_FOR_TRACK_RECORD = 10
+
+# A user needs at least this many prior alerts before "never seen from this
+# IP" is meaningful. Stops every user's very first alert from being flagged.
+MIN_OBSERVATIONS_FOR_USER_HISTORY = 3
 
 # ---------------------------------------------------------------------------
 # Server

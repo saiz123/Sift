@@ -65,8 +65,9 @@ class Handler(BaseHTTPRequestHandler):
             verdict = params.get("verdict", [None])[0]
             if verdict not in (None, "ESCALATE", "REVIEW", "JUNK"):
                 verdict = None
-            alerts = db.list_alerts(verdict_filter=verdict)
-            return self._send(200, views.render_dashboard(alerts, db.verdict_counts(), verdict))
+            q = (params.get("q", [""])[0] or "").strip() or None
+            alerts = db.list_alerts(verdict_filter=verdict, q=q)
+            return self._send(200, views.render_dashboard(alerts, db.verdict_counts(), verdict, q))
 
         m = re.fullmatch(r"/alert/(\d+)", path)
         if m:
