@@ -22,6 +22,15 @@ sift is a small, opinionated answer to that gap:
 > sift is a starting point, not a finished SIEM. It's built to be read,
 > forked, and extended. See the [roadmap](#roadmap).
 
+> [!NOTE]
+> **Full disclosure:** sift was built with an AI coding assistant — the kind
+> whose "yearly" token quota has a way of evaporating in about a month of
+> real use. Somewhere around the third top-up, the project came out the other
+> side with strong feelings about software that needs a live AI subscription
+> just to tell you a login looks weird at 3am. So sift doesn't have one.
+> Every signal above runs on data it already owns, for the price of
+> electricity. The irony is noted. The bill is not.
+
 ---
 
 ## Quickstart
