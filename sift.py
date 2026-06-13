@@ -6,15 +6,18 @@ Then send alerts: python3 send_sample.py sample_alerts/real_attack.json
 Or point Wazuh:   POST your alerts to  http://<host>:<port>/webhook/wazuh
 
 Routes
-  GET  /                     triage queue (optional ?verdict=ESCALATE|REVIEW|JUNK)
+  GET  /                     triage queue (optional ?verdict=&q=&snoozed=1&age=<hours>)
   GET  /alert/<id>           the alert and its receipt
   POST /alert/<id>/feedback  record an analyst verdict (teaches the noisy-rule signal)
+  POST /alert/<id>/snooze    hide this alert from the queue for N hours
+  POST /alert/<id>/unsnooze  bring a snoozed alert back into the queue now
   POST /webhook/wazuh        ingest one Wazuh alert; returns the verdict as JSON
   GET  /healthz              liveness check
 
 Pure Python standard library — no pip install, nothing to pull from a CDN.
 """
 
+import datetime as dt
 import json
 import re
 import urllib.parse
@@ -66,8 +69,16 @@ class Handler(BaseHTTPRequestHandler):
             if verdict not in (None, "ESCALATE", "REVIEW", "JUNK"):
                 verdict = None
             q = (params.get("q", [""])[0] or "").strip() or None
-            alerts = db.list_alerts(verdict_filter=verdict, q=q)
-            return self._send(200, views.render_dashboard(alerts, db.verdict_counts(), verdict, q))
+            snoozed = params.get("snoozed", [""])[0] == "1"
+            age_raw = params.get("age", [""])[0]
+            age_hours = int(age_raw) if age_raw.isdigit() else None
+            alerts = db.list_alerts(
+                verdict_filter=verdict, q=q, snoozed=snoozed, min_age_hours=age_hours
+            )
+            return self._send(200, views.render_dashboard(
+                alerts, db.verdict_counts(), verdict, q,
+                snoozed=snoozed, age=age_hours, snoozed_n=db.snoozed_count(),
+            ))
 
         m = re.fullmatch(r"/alert/(\d+)", path)
         if m:
@@ -87,6 +98,14 @@ class Handler(BaseHTTPRequestHandler):
         m = re.fullmatch(r"/alert/(\d+)/feedback", path)
         if m:
             return self._feedback(int(m.group(1)))
+
+        m = re.fullmatch(r"/alert/(\d+)/snooze", path)
+        if m:
+            return self._snooze(int(m.group(1)))
+
+        m = re.fullmatch(r"/alert/(\d+)/unsnooze", path)
+        if m:
+            return self._unsnooze(int(m.group(1)))
 
         return self._send_json(404, {"error": "not found"})
 
@@ -116,6 +135,24 @@ class Handler(BaseHTTPRequestHandler):
         if verdict not in ("true_positive", "false_positive"):
             return self._send_json(400, {"error": "verdict must be true_positive or false_positive"})
         if not db.record_feedback(alert_id, verdict):
+            return self._send_json(404, {"error": "no such alert"})
+        return self._redirect(f"/alert/{alert_id}")
+
+    def _snooze(self, alert_id):
+        form = urllib.parse.parse_qs(self._read_body().decode("utf-8"))
+        try:
+            hours = float(form.get("hours", [""])[0])
+        except ValueError:
+            return self._send_json(400, {"error": "hours must be a number"})
+        if hours <= 0:
+            return self._send_json(400, {"error": "hours must be positive"})
+        until = (dt.datetime.now() + dt.timedelta(hours=hours)).isoformat(timespec="seconds")
+        if not db.snooze_alert(alert_id, until):
+            return self._send_json(404, {"error": "no such alert"})
+        return self._redirect(f"/alert/{alert_id}")
+
+    def _unsnooze(self, alert_id):
+        if not db.unsnooze_alert(alert_id):
             return self._send_json(404, {"error": "no such alert"})
         return self._redirect(f"/alert/{alert_id}")
 

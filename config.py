@@ -116,9 +116,12 @@ BUSINESS_END = 18
 DUPLICATE_WINDOW_HOURS = 24
 DUPLICATE_FLOOD_COUNT = 50
 
-# A rule needs at least this many past decisions before its track record is
-# trusted enough to penalise it. Stops a single early mistake from muting it.
-MIN_OBSERVATIONS_FOR_TRACK_RECORD = 10
+# How conservatively to read a rule's false-positive track record. The noisy-
+# rule penalty is scaled by the lower bound of a Wilson confidence interval on
+# the false-positive rate, not the raw rate — so one early false positive
+# barely moves the score, and the penalty firms up as decisions accumulate.
+# Higher = more conservative (slower to penalise). 1.96 ~= 95% confidence.
+NOISY_RULE_CONFIDENCE_Z = 1.96
 
 # A user needs at least this many prior alerts before "never seen from this
 # IP" is meaningful. Stops every user's very first alert from being flagged.

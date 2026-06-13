@@ -12,6 +12,7 @@ renders identically on an air-gapped analyst workstation.
 import html
 import json
 import datetime as dt
+import urllib.parse
 
 import config
 
@@ -59,14 +60,16 @@ a { color:inherit; text-decoration:none; }
 .chip.escalate .n { color:var(--escalate); }
 .chip.review .n { color:var(--review); }
 .chip.junk .n { color:var(--junk); }
+.chip.snoozed .n { color:var(--accent); }
 
 /* search */
 .search { display:flex; gap:8px; align-items:center; }
-.search input[type=search] { font-family:var(--mono); font-size:13px;
+.search input[type=search], .search select { font-family:var(--mono); font-size:13px;
   padding:9px 12px; border-radius:8px; border:1px solid var(--line);
-  background:var(--slate-850); color:var(--text); min-width:220px; }
+  background:var(--slate-850); color:var(--text); }
+.search input[type=search] { min-width:220px; }
 .search input[type=search]::placeholder { color:var(--faint); }
-.search input[type=search]:focus { outline:2px solid var(--accent); outline-offset:-1px; }
+.search input[type=search]:focus, .search select:focus { outline:2px solid var(--accent); outline-offset:-1px; }
 .search .clear { font-family:var(--mono); font-size:12px; color:var(--muted); white-space:nowrap; }
 .search .clear:hover { color:var(--accent); }
 
@@ -157,6 +160,11 @@ td.mono, .mono { font-family:var(--mono); }
   border-radius:8px; padding:12px 16px; }
 .decided b.tp { color:#f0a4a1; } .decided b.fp { color:#7ed3a3; }
 
+/* snooze */
+.snooze { margin-top:24px; }
+.snooze form { display:flex; gap:12px; flex-wrap:wrap; }
+.snooze .decided { margin-bottom:12px; }
+
 details.raw { margin-top:26px; }
 details.raw summary { cursor:pointer; color:var(--muted); font-family:var(--mono);
   font-size:13px; }
@@ -189,6 +197,12 @@ def _fmt_time(iso):
         return iso or "—"
 
 
+def _qs(**params):
+    """Build a /?key=value query string from truthy params only."""
+    pairs = [(k, str(v)) for k, v in params.items() if v]
+    return "/?" + urllib.parse.urlencode(pairs) if pairs else "/"
+
+
 def page(title, body):
     return (
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
@@ -209,7 +223,15 @@ def _masthead(show_back=False):
     )
 
 
-def render_dashboard(alerts, counts, active_filter, q=None):
+AGE_OPTIONS = [
+    ("", "Any age"),
+    ("1", "Older than 1h"),
+    ("24", "Older than 24h"),
+    ("168", "Older than 7d"),
+]
+
+
+def render_dashboard(alerts, counts, active_filter, q=None, snoozed=False, age=None, snoozed_n=0):
     chips = []
     chip_defs = [
         (None, "all", sum(counts.values()), ""),
@@ -218,21 +240,36 @@ def render_dashboard(alerts, counts, active_filter, q=None):
         ("JUNK", "junk", counts["JUNK"], "junk"),
     ]
     for value, label, n, cls in chip_defs:
-        href = "/" if value is None else "/?verdict=" + value
-        active = " active" if active_filter == value else ""
+        href = _qs(verdict=value)
+        active = " active" if (not snoozed and active_filter == value) else ""
         chips.append(
             f'<a class="chip {cls}{active}" href="{href}">'
             f'<span class="n">{n}</span> {label}</a>'
         )
+    chips.append(
+        f'<a class="chip snoozed{" active" if snoozed else ""}" href="{_qs(snoozed="1")}">'
+        f'<span class="n">{snoozed_n}</span> snoozed</a>'
+    )
 
-    clear_href = "/" if active_filter is None else "/?verdict=" + active_filter
+    age_str = str(age) if age else ""
+    clear_href = _qs(verdict=active_filter, snoozed="1" if snoozed else None)
+    hidden = ""
+    if active_filter:
+        hidden += f'<input type="hidden" name="verdict" value="{_esc(active_filter)}">'
+    if snoozed:
+        hidden += '<input type="hidden" name="snoozed" value="1">'
+    age_select = "<select name=\"age\">" + "".join(
+        f'<option value="{v}"{" selected" if v == age_str else ""}>{_esc(label)}</option>'
+        for v, label in AGE_OPTIONS
+    ) + "</select>"
     search = (
         '<form class="search" method="get" action="/">'
-        + (f'<input type="hidden" name="verdict" value="{_esc(active_filter)}">' if active_filter else "")
+        + hidden
         + '<input type="search" name="q" placeholder="filter by rule, target, IP, user…"'
         + f' value="{_esc(q or "")}">'
+        + age_select
         + '<button class="btn" type="submit">Filter</button>'
-        + (f'<a class="clear" href="{clear_href}">clear</a>' if q else "")
+        + (f'<a class="clear" href="{clear_href}">clear</a>' if (q or age) else "")
         + "</form>"
     )
 
@@ -258,7 +295,14 @@ def render_dashboard(alerts, counts, active_filter, q=None):
             "<th style=\"text-align:right\">Score</th><th>Verdict</th>"
             "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>"
         )
-    elif q or active_filter:
+    elif snoozed:
+        msg = "No snoozed alerts match this filter." if (q or age) else "Nothing snoozed right now."
+        table = (
+            '<div class="table-wrap"><div class="empty">' + msg + "<br><br>"
+            "Alerts you snooze from their detail page reappear here until they wake up."
+            "</div></div>"
+        )
+    elif q or active_filter or age:
         table = (
             '<div class="table-wrap"><div class="empty">No alerts match this filter.<br><br>'
             f'Try <a href="{clear_href}">clearing the search</a>'
@@ -350,11 +394,41 @@ def _feedback_html(alert):
     )
 
 
+def _snooze_html(alert):
+    aid = alert["id"]
+    snoozed_until = alert.get("snoozed_until")
+    active = False
+    if snoozed_until:
+        try:
+            active = dt.datetime.fromisoformat(snoozed_until) > dt.datetime.now()
+        except ValueError:
+            active = False
+    if active:
+        return (
+            '<div class="snooze">'
+            f'<div class="decided">Snoozed until <b>{_esc(_fmt_time(snoozed_until))}</b>'
+            " &mdash; hidden from the queue until then.</div>"
+            f'<form method="post" action="/alert/{aid}/unsnooze">'
+            '<button class="btn" type="submit">Wake now</button>'
+            "</form></div>"
+        )
+    return (
+        '<div class="snooze"><p class="panel-label">Snooze</p>'
+        f'<form method="post" action="/alert/{aid}/snooze">'
+        '<button class="btn" name="hours" value="1">1h</button>'
+        '<button class="btn" name="hours" value="4">4h</button>'
+        '<button class="btn" name="hours" value="24">24h</button>'
+        '<button class="btn" name="hours" value="168">7d</button>'
+        "</form></div>"
+    )
+
+
 def render_detail(alert):
     raw_pretty = json.dumps(json.loads(alert["raw_json"]), indent=2)
     left = (
         '<div><p class="panel-label">Alert</p>' + _facts_html(alert)
         + _feedback_html(alert)
+        + _snooze_html(alert)
         + '<details class="raw"><summary>Raw alert JSON</summary><pre>'
         + _esc(raw_pretty) + "</pre></details></div>"
     )

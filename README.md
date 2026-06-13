@@ -98,14 +98,20 @@ each handled alert **Confirm real threat** or **Mark false alarm**. sift keeps
 a per-rule tally, and the *Historically noisy rule* signal reads from it:
 
 ```
-First time a noisy rule fires:   REVIEW   (+20, no track record yet)
-After 12 'false alarm' verdicts: JUNK     (+20 −45 = −25)
-                                           └─ "false alarm 12/12 times (100%)"
+First time a noisy rule fires:    REVIEW       (+20, no track record yet)
+First 'false alarm' verdict:      JUNK         (+20 −9  = +11)
+                                                └─ "false alarm 1/1 times (100%) —
+                                                    21% confident it's at least that noisy"
+After 12 'false alarm' verdicts:  deeper JUNK  (+20 −34 = −14)
+                                                └─ "false alarm 12/12 times (100%) —
+                                                    76% confident it's at least that noisy"
 ```
 
 The rule sinks on its own, the reason is on the receipt, and you never edited
-a playbook. A rule needs a minimum number of decisions before its record is
-trusted (so one early mistake can't mute it).
+a playbook. The penalty is the lower bound of a confidence interval on the
+rule's false-positive rate, not the raw rate — so one early "false alarm"
+moves the score immediately but conservatively, and the penalty firms up as
+more decisions come in. No arbitrary "wait for N observations" cliff.
 
 ---
 
@@ -160,7 +166,9 @@ Everything tunable is in [`config.py`](config.py), commented:
 - `ALLOWLIST_IPS` / `ALLOWLIST_USERS` / `ALLOWLIST_HASHES` — trusted IPs
   (or CIDR ranges), usernames, and file hashes
 - `BUSINESS_START` / `BUSINESS_END` — your local business hours
-- duplicate-flood and track-record thresholds
+- `DUPLICATE_WINDOW_HOURS` / `DUPLICATE_FLOOD_COUNT` — duplicate-flood thresholds
+- `NOISY_RULE_CONFIDENCE_Z` — how conservatively the learning loop reads a
+  rule's false-positive track record
 
 Edit, save, restart.
 
@@ -194,17 +202,20 @@ That's also sift's answer to the wave of "AI SOC analyst" products: explainable
 and free to run, not a closed box with a per-alert bill. Natural next steps,
 roughly in order:
 
-- **Bulk actions & queue ergonomics** — the dashboard now has a search box
-  (filter by rule, target, source IP, or user, combinable with the verdict
-  chips); keyboard-driven triage, age filters, and snooze are still open.
+- **Bulk actions & queue ergonomics** — the dashboard has a search box (filter
+  by rule, target, source IP, or user, combinable with the verdict chips), an
+  age filter ("older than 1h/24h/7d"), and per-alert snooze (hide it from the
+  queue for a while, with a one-click "wake now"). Keyboard-driven triage and
+  true bulk actions are still open.
 - **More signals** — identity context (a user alerting from a source IP sift
   has never seen them use before) and allowlists for users/hashes are in.
   Still open: geo/ASN velocity, threat-intel beyond two feeds.
 - **More sources** — Suricata, Elastic, GuardDuty, M365 — each a new normaliser.
 - **Outbound actions** — push verdicts back to TheHive / a ticketing system,
   notify chat; keep the human in the loop for anything destructive.
-- **Smarter noisy-rule modelling** — confidence intervals on the track record,
-  per-asset rule tuning, drift alerts when a quiet rule turns noisy.
+- **Smarter noisy-rule modelling** — the penalty now scales with a Wilson
+  confidence interval on the track record (see [the learning loop](#the-learning-loop)).
+  Still open: per-asset rule tuning, drift alerts when a quiet rule turns noisy.
 
 Contributions welcome — the codebase is small on purpose so a new signal or a
 new SIEM is an afternoon, not a project.

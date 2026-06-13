@@ -37,6 +37,25 @@ def _ip_in_list(ip, entries):
     return False
 
 
+def _wilson_lower_bound(successes, total, z):
+    """
+    Lower bound of the Wilson score confidence interval for a proportion.
+
+    With few observations this sits well below the raw rate (so a rule with
+    one false positive isn't treated as "100% noisy"); as observations pile
+    up it converges on the raw rate. That single curve replaces a hard
+    minimum-observations cutoff.
+    """
+    if total <= 0:
+        return 0.0
+    p = successes / total
+    z2 = z * z
+    denom = 1 + z2 / total
+    center = p + z2 / (2 * total)
+    margin = z * ((p * (1 - p) / total + z2 / (4 * total * total)) ** 0.5)
+    return (center - margin) / denom
+
+
 # --- checks ---------------------------------------------------------------
 # Signature: check(alert: dict, ctx: dict) -> line dict | None
 # ctx holds anything that needed a database or network lookup, gathered once
@@ -177,19 +196,19 @@ def check_noisy_rule(alert, ctx):
     if not stats:
         return None
     total = stats.get("total", 0)
-    if total < config.MIN_OBSERVATIONS_FOR_TRACK_RECORD:
-        return None
     fp = stats.get("fp", 0)
-    fp_rate = fp / total
-    if fp_rate <= 0:
+    if total == 0 or fp == 0:
         return None
-    points = round(config.WEIGHTS["noisy_rule_max_penalty"] * fp_rate)
+    confidence = _wilson_lower_bound(fp, total, config.NOISY_RULE_CONFIDENCE_Z)
+    points = round(config.WEIGHTS["noisy_rule_max_penalty"] * confidence)
     if points == 0:
         return None
+    fp_rate = fp / total
     return _line(
         "Historically noisy rule",
         points,
-        f"This rule was a false alarm {fp}/{total} times ({fp_rate:.0%})",
+        f"False alarm {fp}/{total} times ({fp_rate:.0%}) — "
+        f"{confidence:.0%} confident it's at least that noisy",
     )
 
 

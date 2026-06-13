@@ -62,6 +62,9 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_alerts_dedup    ON alerts(rule_id, src_ip);
             """
         )
+        cols = {row["name"] for row in conn.execute("PRAGMA table_info(alerts)").fetchall()}
+        if "snoozed_until" not in cols:
+            conn.execute("ALTER TABLE alerts ADD COLUMN snoozed_until TEXT")
 
 
 def _now():
@@ -103,10 +106,17 @@ def get_alert(alert_id):
         return dict(row) if row else None
 
 
-def list_alerts(verdict_filter=None, q=None, limit=200):
+def list_alerts(verdict_filter=None, q=None, snoozed=False, min_age_hours=None, limit=200):
     query = "SELECT * FROM alerts"
     clauses = []
     params = []
+    now = _now()
+    if snoozed:
+        clauses.append("snoozed_until IS NOT NULL AND snoozed_until > ?")
+        params.append(now)
+    else:
+        clauses.append("(snoozed_until IS NULL OR snoozed_until <= ?)")
+        params.append(now)
     if verdict_filter:
         clauses.append("verdict = ?")
         params.append(verdict_filter)
@@ -117,8 +127,11 @@ def list_alerts(verdict_filter=None, q=None, limit=200):
         )
         like = f"%{q}%"
         params.extend([like] * 5)
-    if clauses:
-        query += " WHERE " + " AND ".join(clauses)
+    if min_age_hours is not None:
+        cutoff = (dt.datetime.now() - dt.timedelta(hours=min_age_hours)).isoformat(timespec="seconds")
+        clauses.append("received_at <= ?")
+        params.append(cutoff)
+    query += " WHERE " + " AND ".join(clauses)
     query += " ORDER BY id DESC LIMIT ?"
     params.append(limit)
     with connect() as conn:
@@ -126,14 +139,47 @@ def list_alerts(verdict_filter=None, q=None, limit=200):
 
 
 def verdict_counts():
+    """Counts for the chips — excludes alerts currently snoozed out of the queue."""
+    now = _now()
     with connect() as conn:
         rows = conn.execute(
-            "SELECT verdict, COUNT(*) AS n FROM alerts GROUP BY verdict"
+            "SELECT verdict, COUNT(*) AS n FROM alerts"
+            " WHERE snoozed_until IS NULL OR snoozed_until <= ?"
+            " GROUP BY verdict",
+            (now,),
         ).fetchall()
     counts = {"ESCALATE": 0, "REVIEW": 0, "JUNK": 0}
     for r in rows:
         counts[r["verdict"]] = r["n"]
     return counts
+
+
+# --- snooze -----------------------------------------------------------------
+
+def snoozed_count():
+    now = _now()
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM alerts WHERE snoozed_until IS NOT NULL AND snoozed_until > ?",
+            (now,),
+        ).fetchone()
+    return row["n"]
+
+
+def snooze_alert(alert_id, until_iso):
+    with connect() as conn:
+        cur = conn.execute(
+            "UPDATE alerts SET snoozed_until = ? WHERE id = ?", (until_iso, alert_id)
+        )
+        return cur.rowcount > 0
+
+
+def unsnooze_alert(alert_id):
+    with connect() as conn:
+        cur = conn.execute(
+            "UPDATE alerts SET snoozed_until = NULL WHERE id = ?", (alert_id,)
+        )
+        return cur.rowcount > 0
 
 
 def count_recent_duplicates(rule_id, src_ip, window_hours):
