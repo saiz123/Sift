@@ -353,6 +353,11 @@ That's also sift's answer to the wave of "AI SOC analyst" products: explainable
 and free to run, not a closed box with a per-alert bill. Natural next steps,
 roughly in order:
 
+> **v1.1** landed all four items below in one pass: M365/Microsoft Graph as a
+> source, the source-IP velocity signal, TheHive as an outbound action, and
+> per-asset noisy-rule tuning with rule-drift alerts. The "Still open" notes
+> in each bullet are the candidates for v1.2.
+
 - **Bulk actions & queue ergonomics** — the dashboard has a search box (filter
   by rule, target, source IP, or user, combinable with the verdict chips), an
   age filter ("older than 1h/24h/7d"), per-alert snooze (hide it from the
