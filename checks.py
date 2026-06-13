@@ -11,6 +11,7 @@ with. No hidden math. Adding a new signal = adding one function to this file
 and listing it in ALL_CHECKS at the bottom.
 """
 
+import datetime as dt
 import ipaddress
 
 import config
@@ -206,7 +207,13 @@ def check_allowlisted_hash(alert, ctx):
 
 
 def check_noisy_rule(alert, ctx):
-    stats = ctx.get("rule_stats")
+    per_asset = ctx.get("rule_target_stats")
+    scope = ""
+    if per_asset and per_asset.get("total", 0) >= config.NOISY_RULE_MIN_PER_ASSET:
+        stats = per_asset
+        scope = f" on '{alert.get('target')}'"
+    else:
+        stats = ctx.get("rule_stats")
     if not stats:
         return None
     total = stats.get("total", 0)
@@ -221,8 +228,32 @@ def check_noisy_rule(alert, ctx):
     return _line(
         "Historically noisy rule",
         points,
-        f"False alarm {fp}/{total} times ({fp_rate:.0%}) — "
+        f"False alarm {fp}/{total} times ({fp_rate:.0%}){scope} — "
         f"{confidence:.0%} confident it's at least that noisy",
+    )
+
+
+def check_rule_drift(alert, ctx):
+    activity = ctx.get("rule_activity")
+    if not activity or activity["total"] < config.DRIFT_MIN_LIFETIME_ALERTS:
+        return None
+    try:
+        first_seen = dt.datetime.fromisoformat(activity["first_seen"])
+    except (TypeError, ValueError):
+        return None
+    age_hours = (dt.datetime.now() - first_seen).total_seconds() / 3600
+    if age_hours <= 0:
+        return None
+    baseline = activity["total"] * config.DRIFT_WINDOW_HOURS / age_hours
+    recent = activity["recent"]
+    if baseline <= 0 or recent < config.DRIFT_SPIKE_MULTIPLIER * baseline:
+        return None
+    return _line(
+        "Rule activity spike",
+        config.WEIGHTS["rule_drift"],
+        f"Rule {alert.get('rule_id')} has fired {recent}x in the last "
+        f"{config.DRIFT_WINDOW_HOURS}h, vs. a historical average of "
+        f"~{baseline:.1f}x/{config.DRIFT_WINDOW_HOURS}h",
     )
 
 
@@ -248,6 +279,7 @@ ALL_CHECKS = [
     check_new_source_for_user,
     check_velocity,
     check_noisy_rule,
+    check_rule_drift,
     check_duplicate_flood,
     check_allowlisted_ip,
     check_allowlisted_user,

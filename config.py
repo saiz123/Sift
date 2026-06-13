@@ -75,6 +75,11 @@ WEIGHTS = {
     # Many identical alerts (same rule + same source) seen recently — usually
     # a scanner or a misconfiguration, not an incident.
     "duplicate_flood": -20,
+
+    # This rule has fired well above its own historical average recently —
+    # a behavioural change worth a second look, whether that's the rule
+    # turning noisy or a real incident causing a burst.
+    "rule_drift": 10,
 }
 
 # ---------------------------------------------------------------------------
@@ -133,6 +138,12 @@ DUPLICATE_FLOOD_COUNT = 50
 # Higher = more conservative (slower to penalise). 1.96 ~= 95% confidence.
 NOISY_RULE_CONFIDENCE_Z = 1.96
 
+# Per-asset noisy-rule tuning. Once a (rule, target) pair has at least this
+# many analyst decisions, the noisy-rule penalty is computed from that pair's
+# own track record instead of the rule's global one — a rule that's noisy on
+# one asset doesn't quiet down everywhere, and vice versa.
+NOISY_RULE_MIN_PER_ASSET = 3
+
 # A user needs at least this many prior alerts before "never seen from this
 # IP" is meaningful. Stops every user's very first alert from being flagged.
 MIN_OBSERVATIONS_FOR_USER_HISTORY = 3
@@ -147,6 +158,19 @@ MIN_OBSERVATIONS_FOR_USER_HISTORY = 3
 # ---------------------------------------------------------------------------
 VELOCITY_WINDOW_HOURS = 1
 VELOCITY_IP_THRESHOLD = 3
+
+# ---------------------------------------------------------------------------
+# Rule drift.
+#
+# If a rule has fired DRIFT_SPIKE_MULTIPLIER times (or more) its own
+# historical average within the last DRIFT_WINDOW_HOURS, that's a change in
+# behaviour worth flagging — whether it's the rule turning noisy or a real
+# incident generating a burst of alerts. DRIFT_MIN_LIFETIME_ALERTS is how many
+# total alerts a rule needs before a historical average is meaningful.
+# ---------------------------------------------------------------------------
+DRIFT_WINDOW_HOURS = 24
+DRIFT_SPIKE_MULTIPLIER = 3
+DRIFT_MIN_LIFETIME_ALERTS = 5
 
 # ---------------------------------------------------------------------------
 # Generic source (POST /webhook/generic).

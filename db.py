@@ -52,6 +52,14 @@ def init_db():
                 fp        INTEGER NOT NULL DEFAULT 0
             );
 
+            CREATE TABLE IF NOT EXISTS rule_target_stats (
+                rule_id   TEXT NOT NULL,
+                target    TEXT NOT NULL,
+                total     INTEGER NOT NULL DEFAULT 0,
+                fp        INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (rule_id, target)
+            );
+
             CREATE TABLE IF NOT EXISTS enrich_cache (
                 cache_key TEXT PRIMARY KEY,
                 value_json TEXT NOT NULL,
@@ -257,20 +265,38 @@ def user_source_history(src_user, src_ip):
 
 # --- the learning loop ----------------------------------------------------
 
+def _adjust_stats(conn, table, where_sql, where_params, previous, analyst_verdict):
+    """
+    Undo the previous decision's contribution to (total, fp), if any, then
+    apply the new one. Shared by the global and per-asset rule track records.
+    """
+    if previous == "true_positive":
+        conn.execute(f"UPDATE {table} SET total = total - 1 WHERE {where_sql}", where_params)
+    elif previous == "false_positive":
+        conn.execute(f"UPDATE {table} SET total = total - 1, fp = fp - 1 WHERE {where_sql}", where_params)
+
+    if analyst_verdict == "true_positive":
+        conn.execute(f"UPDATE {table} SET total = total + 1 WHERE {where_sql}", where_params)
+    else:
+        conn.execute(f"UPDATE {table} SET total = total + 1, fp = fp + 1 WHERE {where_sql}", where_params)
+
+
 def record_feedback(alert_id, analyst_verdict):
     """
     Save the analyst's call ('true_positive' or 'false_positive') and update
-    the rule's running track record. Re-deciding an alert adjusts the tally
-    correctly instead of double-counting.
+    the rule's running track record, both globally and for this rule on this
+    asset. Re-deciding an alert adjusts the tally correctly instead of
+    double-counting.
     """
     assert analyst_verdict in ("true_positive", "false_positive")
     with connect() as conn:
         row = conn.execute(
-            "SELECT rule_id, analyst_verdict FROM alerts WHERE id = ?", (alert_id,)
+            "SELECT rule_id, target, analyst_verdict FROM alerts WHERE id = ?", (alert_id,)
         ).fetchone()
         if row is None:
             return False
         rule_id = row["rule_id"]
+        target = row["target"]
         previous = row["analyst_verdict"]
 
         conn.execute(
@@ -283,27 +309,16 @@ def record_feedback(alert_id, analyst_verdict):
                 "INSERT OR IGNORE INTO rule_stats (rule_id, total, fp) VALUES (?,0,0)",
                 (rule_id,),
             )
-            # Undo the previous decision's contribution, if any.
-            if previous == "true_positive":
+            _adjust_stats(conn, "rule_stats", "rule_id = ?", (rule_id,), previous, analyst_verdict)
+
+            if target:
                 conn.execute(
-                    "UPDATE rule_stats SET total = total - 1 WHERE rule_id = ?",
-                    (rule_id,),
+                    "INSERT OR IGNORE INTO rule_target_stats (rule_id, target, total, fp) VALUES (?,?,0,0)",
+                    (rule_id, target),
                 )
-            elif previous == "false_positive":
-                conn.execute(
-                    "UPDATE rule_stats SET total = total - 1, fp = fp - 1 WHERE rule_id = ?",
-                    (rule_id,),
-                )
-            # Apply the new decision.
-            if analyst_verdict == "true_positive":
-                conn.execute(
-                    "UPDATE rule_stats SET total = total + 1 WHERE rule_id = ?",
-                    (rule_id,),
-                )
-            else:
-                conn.execute(
-                    "UPDATE rule_stats SET total = total + 1, fp = fp + 1 WHERE rule_id = ?",
-                    (rule_id,),
+                _adjust_stats(
+                    conn, "rule_target_stats", "rule_id = ? AND target = ?",
+                    (rule_id, target), previous, analyst_verdict,
                 )
     return True
 
@@ -316,6 +331,42 @@ def get_rule_stats(rule_id):
             "SELECT total, fp FROM rule_stats WHERE rule_id = ?", (rule_id,)
         ).fetchone()
     return dict(row) if row else None
+
+
+def get_rule_target_stats(rule_id, target):
+    """Per-asset track record for this rule — feeds per-asset noisy-rule tuning."""
+    if not rule_id or not target:
+        return None
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT total, fp FROM rule_target_stats WHERE rule_id = ? AND target = ?",
+            (rule_id, target),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def rule_activity_stats(rule_id, window_hours):
+    """
+    How many times this rule has fired recently vs. over its whole lifetime —
+    feeds the rule-drift signal (a normally-quiet rule suddenly firing a lot).
+    """
+    if not rule_id:
+        return None
+    cutoff = (
+        dt.datetime.now() - dt.timedelta(hours=window_hours)
+    ).isoformat(timespec="seconds")
+    with connect() as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS total, MIN(received_at) AS first_seen,
+                   SUM(CASE WHEN received_at >= ? THEN 1 ELSE 0 END) AS recent
+            FROM alerts WHERE rule_id = ?
+            """,
+            (cutoff, rule_id),
+        ).fetchone()
+    if row["total"] == 0:
+        return None
+    return {"total": row["total"], "first_seen": row["first_seen"], "recent": row["recent"]}
 
 
 # --- enrichment cache -----------------------------------------------------

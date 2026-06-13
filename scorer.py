@@ -36,6 +36,8 @@ def _build_context(alert):
     return {
         "hour": _parse_hour(alert.get("timestamp")),
         "rule_stats": db.get_rule_stats(alert.get("rule_id")),
+        "rule_target_stats": db.get_rule_target_stats(alert.get("rule_id"), alert.get("target")),
+        "rule_activity": db.rule_activity_stats(alert.get("rule_id"), config.DRIFT_WINDOW_HOURS),
         "duplicate_count": db.count_recent_duplicates(
             alert.get("rule_id"),
             alert.get("src_ip"),

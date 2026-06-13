@@ -131,7 +131,8 @@ transparency, not in cleverness you can't audit.
 | Outside business hours | `+15` | activity at an unusual time |
 | Unfamiliar source for user | `+25` | this user has never alerted from this IP before |
 | Source-IP velocity | `+35` | this user alerted from 3+ different source IPs within an hour — impossible travel without needing a GeoIP database |
-| Historically noisy rule | up to `−45` | analysts keep marking this rule a false alarm |
+| Historically noisy rule | up to `−45` | analysts keep marking this rule a false alarm (scoped per-asset once an asset has its own track record) |
+| Rule activity spike | `+10` | this rule has fired well above its own historical average recently — a quiet rule turning noisy, or a real incident |
 | Repeated noise | `−20` | a flood of identical alerts (scanner-like) |
 | Trusted source | `−60` | the source IP is on your allowlist |
 | Trusted user | `−40` | the user is on your allowlist (e.g. a service account) |
@@ -160,6 +161,19 @@ a playbook. The penalty is the lower bound of a confidence interval on the
 rule's false-positive rate, not the raw rate — so one early "false alarm"
 moves the score immediately but conservatively, and the penalty firms up as
 more decisions come in. No arbitrary "wait for N observations" cliff.
+
+Once a (rule, target) pair has built up `NOISY_RULE_MIN_PER_ASSET` or more
+decisions of its own, the penalty is computed from that pair's track record
+instead of the rule's global one — a rule that's noisy on one box doesn't
+quiet down everywhere, and a rule that's reliable on a critical asset doesn't
+get dragged down by noise elsewhere. The receipt says which track record it
+used (e.g. *"...100%) on 'jump-host' — 57% confident..."*).
+
+Separately, sift watches each rule's overall firing rate: if a rule suddenly
+fires `DRIFT_SPIKE_MULTIPLIER`x or more its own historical average within
+`DRIFT_WINDOW_HOURS`, that's a *Rule activity spike* (+10) — a behavioural
+change worth a second look, whether that's the rule turning noisy or a real
+incident causing a burst.
 
 ---
 
@@ -295,9 +309,13 @@ Everything tunable is in [`config.py`](config.py), commented:
 - `DUPLICATE_WINDOW_HOURS` / `DUPLICATE_FLOOD_COUNT` — duplicate-flood thresholds
 - `NOISY_RULE_CONFIDENCE_Z` — how conservatively the learning loop reads a
   rule's false-positive track record
+- `NOISY_RULE_MIN_PER_ASSET` — how many analyst decisions a (rule, target)
+  pair needs before its own track record overrides the rule's global one
 - `VELOCITY_WINDOW_HOURS` / `VELOCITY_IP_THRESHOLD` — how many distinct
   source IPs a user can alert from in how short a window before it looks
   like impossible travel
+- `DRIFT_WINDOW_HOURS` / `DRIFT_SPIKE_MULTIPLIER` / `DRIFT_MIN_LIFETIME_ALERTS`
+  — how big a jump in a rule's firing rate counts as a "Rule activity spike"
 - `GENERIC_FIELD_MAP` — dotted-path field mapping for `POST /webhook/generic`,
   for wiring up a tool that doesn't have a dedicated normaliser
   (see [Other sources](#other-sources))
@@ -356,9 +374,11 @@ roughly in order:
   These are notifications, not automation — sift never acts on an asset
   itself, keeping a human in the loop for anything destructive. Still open:
   other ticketing systems (Jira, ServiceNow).
-- **Smarter noisy-rule modelling** — the penalty now scales with a Wilson
-  confidence interval on the track record (see [the learning loop](#the-learning-loop)).
-  Still open: per-asset rule tuning, drift alerts when a quiet rule turns noisy.
+- **Smarter noisy-rule modelling** — the penalty scales with a Wilson
+  confidence interval on the track record, scoped per-asset once a (rule,
+  target) pair has its own decisions, and a rule firing well above its own
+  historical average is flagged as a "Rule activity spike" (see
+  [the learning loop](#the-learning-loop)).
 
 Contributions welcome — the codebase is small on purpose so a new signal or a
 new SIEM is an afternoon, not a project.
