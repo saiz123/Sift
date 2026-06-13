@@ -157,3 +157,11 @@ _load_dotenv()
 
 ABUSEIPDB_KEY = os.environ.get("ABUSEIPDB_KEY", "")
 VIRUSTOTAL_KEY = os.environ.get("VIRUSTOTAL_KEY", "")
+
+# ---------------------------------------------------------------------------
+# Outbound notification (optional).
+# Set this to a Slack/Mattermost/Discord incoming-webhook URL and sift will
+# POST a short summary there whenever an alert is scored ESCALATE. Leave it
+# unset and sift stays silent — nothing else changes.
+# ---------------------------------------------------------------------------
+ESCALATE_WEBHOOK_URL = os.environ.get("ESCALATE_WEBHOOK_URL", "")

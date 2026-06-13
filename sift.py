@@ -11,6 +11,7 @@ Routes
   POST /alert/<id>/feedback  record an analyst verdict (teaches the noisy-rule signal)
   POST /alert/<id>/snooze    hide this alert from the queue for N hours
   POST /alert/<id>/unsnooze  bring a snoozed alert back into the queue now
+  POST /bulk-feedback        record an analyst verdict for many alerts at once
   POST /webhook/wazuh        ingest one Wazuh alert; returns the verdict as JSON
   GET  /healthz              liveness check
 
@@ -25,6 +26,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import config
 import db
+import notify
 import views
 from normalize import normalize_wazuh
 from scorer import score_alert
@@ -107,6 +109,9 @@ class Handler(BaseHTTPRequestHandler):
         if m:
             return self._unsnooze(int(m.group(1)))
 
+        if path == "/bulk-feedback":
+            return self._bulk_feedback()
+
         return self._send_json(404, {"error": "not found"})
 
     def do_HEAD(self):
@@ -122,6 +127,8 @@ class Handler(BaseHTTPRequestHandler):
         alert = normalize_wazuh(raw)
         score, verdict, receipt = score_alert(alert)
         alert_id = db.insert_alert(alert, score, verdict, receipt)
+        if verdict == "ESCALATE":
+            notify.notify_escalation(alert_id, alert, score, receipt)
         return self._send_json(200, {
             "id": alert_id,
             "score": score,
@@ -155,6 +162,19 @@ class Handler(BaseHTTPRequestHandler):
         if not db.unsnooze_alert(alert_id):
             return self._send_json(404, {"error": "no such alert"})
         return self._redirect(f"/alert/{alert_id}")
+
+    def _bulk_feedback(self):
+        form = urllib.parse.parse_qs(self._read_body().decode("utf-8"))
+        verdict = form.get("analyst_verdict", [""])[0]
+        if verdict not in ("true_positive", "false_positive"):
+            return self._send_json(400, {"error": "analyst_verdict must be true_positive or false_positive"})
+        for raw_id in form.get("ids", []):
+            if raw_id.isdigit():
+                db.record_feedback(int(raw_id), verdict)
+        # Redirect back to whatever queue view this came from.
+        keep = [(k, form[k][0]) for k in ("verdict", "q", "snoozed", "age") if form.get(k, [""])[0]]
+        location = "/?" + urllib.parse.urlencode(keep) if keep else "/"
+        return self._redirect(location)
 
     # quieter, tidier logging
     def log_message(self, fmt, *args):

@@ -86,6 +86,13 @@ tbody tr.v-escalate { border-left-color:var(--escalate); }
 tbody tr.v-review   { border-left-color:var(--review); }
 tbody tr.v-junk     { border-left-color:var(--junk); }
 td { padding:12px 14px; vertical-align:top; }
+th.check, td.check { width:32px; padding-right:0; text-align:center; }
+input[type=checkbox] { width:15px; height:15px; accent-color:var(--accent); cursor:pointer; }
+
+/* bulk actions */
+.bulk-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+  margin-top:14px; }
+.bulk-actions .bulk-label { font-size:13px; color:var(--muted); }
 td.mono, .mono { font-family:var(--mono); }
 .rule-desc { color:var(--muted); font-size:12.5px; margin-top:2px; max-width:340px; }
 .num { text-align:right; font-family:var(--mono); font-weight:600; font-variant-numeric:tabular-nums; }
@@ -280,6 +287,8 @@ def render_dashboard(alerts, counts, active_filter, q=None, snoozed=False, age=N
             desc = _esc(a["rule_desc"] or "")
             rows.append(
                 f'<tr class="{vc}" onclick="location.href=\'/alert/{a["id"]}\'" style="cursor:pointer">'
+                f'<td class="check" onclick="event.stopPropagation()">'
+                f'<input type="checkbox" name="ids" value="{a["id"]}"></td>'
                 f'<td class="time">{_fmt_time(a["received_at"])}</td>'
                 f'<td><span class="mono">{_esc(a["rule_id"] or "—")}</span>'
                 f'<div class="rule-desc">{desc}</div></td>'
@@ -289,11 +298,33 @@ def render_dashboard(alerts, counts, active_filter, q=None, snoozed=False, age=N
                 f'<td><span class="pill {vc}">{_esc(a["verdict"])}</span></td>'
                 f"</tr>"
             )
+        bulk_hidden = ""
+        if active_filter:
+            bulk_hidden += f'<input type="hidden" name="verdict" value="{_esc(active_filter)}">'
+        if q:
+            bulk_hidden += f'<input type="hidden" name="q" value="{_esc(q)}">'
+        if snoozed:
+            bulk_hidden += '<input type="hidden" name="snoozed" value="1">'
+        if age:
+            bulk_hidden += f'<input type="hidden" name="age" value="{_esc(age)}">'
         table = (
-            '<div class="table-wrap"><table><thead><tr>'
+            '<form class="bulk-form" method="post" action="/bulk-feedback">'
+            + bulk_hidden
+            + '<div class="table-wrap"><table><thead><tr>'
+            '<th class="check"><input type="checkbox" id="select-all" title="select all"></th>'
             "<th>Time</th><th>Rule</th><th>Target</th><th>Source IP</th>"
             "<th style=\"text-align:right\">Score</th><th>Verdict</th>"
             "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>"
+            '<div class="bulk-actions"><span class="bulk-label">With selected:</span>'
+            '<button class="btn tp" type="submit" name="analyst_verdict" value="true_positive">Real threat</button>'
+            '<button class="btn fp" type="submit" name="analyst_verdict" value="false_positive">False alarm</button>'
+            "</div>"
+            "<script>"
+            "document.getElementById('select-all').addEventListener('change',function(e){"
+            "document.querySelectorAll('input[name=\"ids\"]').forEach(function(c){c.checked=e.target.checked;});"
+            "});"
+            "</script>"
+            "</form>"
         )
     elif snoozed:
         msg = "No snoozed alerts match this filter." if (q or age) else "Nothing snoozed right now."

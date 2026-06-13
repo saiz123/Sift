@@ -165,6 +165,29 @@ twice.
 
 ---
 
+## Outbound notifications (optional)
+
+Set `ESCALATE_WEBHOOK_URL` (env var or `.env`) to a Slack, Mattermost, or
+Discord incoming-webhook URL and sift will POST a short summary there every
+time an alert is scored ESCALATE:
+
+```bash
+export ESCALATE_WEBHOOK_URL=https://hooks.slack.com/services/...
+```
+
+```
+sift ESCALATE -- alert #3 (score 93)
+Rule: 92052 -- Suspicious process execution consistent with credential dumping
+Target: dc01  Source: 45.146.165.37
+Top signals: SIEM severity (+48); Critical asset (+30); Outside business hours (+15)
+```
+
+The POST runs on a background thread with a short timeout — a slow or
+unreachable webhook never delays or breaks alert ingestion. Leave it unset
+and sift stays exactly as before.
+
+---
+
 ## Configuration
 
 Everything tunable is in [`config.py`](config.py), commented:
@@ -192,6 +215,7 @@ normalize.py     raw Wazuh JSON  ->  flat internal alert
 checks.py        the signals — each returns one receipt line or nothing
 scorer.py        gather context, run checks, sum to a score + verdict
 enrich.py        optional AbuseIPDB / VirusTotal lookups
+notify.py        optional chat webhook on ESCALATE
 db.py            SQLite: alerts, per-rule track record, enrichment cache
 views.py         the dashboard and the receipt page
 send_sample.py   push an alert file at a running sift
@@ -213,15 +237,19 @@ roughly in order:
 
 - **Bulk actions & queue ergonomics** — the dashboard has a search box (filter
   by rule, target, source IP, or user, combinable with the verdict chips), an
-  age filter ("older than 1h/24h/7d"), and per-alert snooze (hide it from the
-  queue for a while, with a one-click "wake now"). Keyboard-driven triage and
-  true bulk actions are still open.
+  age filter ("older than 1h/24h/7d"), per-alert snooze (hide it from the
+  queue for a while, with a one-click "wake now"), and checkbox-driven bulk
+  feedback (select rows, mark them all real/false in one click — the learning
+  loop catches up on a noisy rule immediately). Keyboard-driven triage is
+  still open.
 - **More signals** — identity context (a user alerting from a source IP sift
   has never seen them use before) and allowlists for users/hashes are in.
   Still open: geo/ASN velocity, threat-intel beyond two feeds.
 - **More sources** — Suricata, Elastic, GuardDuty, M365 — each a new normaliser.
-- **Outbound actions** — push verdicts back to TheHive / a ticketing system,
-  notify chat; keep the human in the loop for anything destructive.
+- **Outbound actions** — sift can POST a short summary to a Slack/Mattermost/
+  Discord webhook on ESCALATE (see [Outbound notifications](#outbound-notifications-optional)).
+  Still open: push verdicts back to TheHive / a ticketing system; keep the
+  human in the loop for anything destructive.
 - **Smarter noisy-rule modelling** — the penalty now scales with a Wilson
   confidence interval on the track record (see [the learning loop](#the-learning-loop)).
   Still open: per-asset rule tuning, drift alerts when a quiet rule turns noisy.
