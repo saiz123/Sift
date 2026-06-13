@@ -46,6 +46,11 @@ a { color:inherit; text-decoration:none; }
 .tagline { font-size:13px; color:var(--muted); letter-spacing:0.2px; }
 .back { font-family:var(--mono); font-size:13px; color:var(--muted); }
 .back:hover { color:var(--accent); }
+.nav-links { margin-left:auto; display:flex; gap:14px; flex-wrap:wrap; }
+.hint { font-family:var(--mono); font-size:11px; color:var(--faint); margin:-8px 0 18px; }
+kbd { font-family:var(--mono); font-size:10px; border:1px solid var(--line);
+  border-radius:4px; padding:1px 5px; margin-left:6px; color:var(--muted);
+  background:var(--slate-900); }
 
 /* summary chips */
 .toolbar { display:flex; justify-content:space-between; align-items:flex-start;
@@ -85,6 +90,7 @@ tbody tr:hover { background:var(--slate-850); }
 tbody tr.v-escalate { border-left-color:var(--escalate); }
 tbody tr.v-review   { border-left-color:var(--review); }
 tbody tr.v-junk     { border-left-color:var(--junk); }
+tbody tr.focused { background:var(--slate-850); outline:2px solid var(--accent); outline-offset:-2px; }
 td { padding:12px 14px; vertical-align:top; }
 th.check, td.check { width:32px; padding-right:0; text-align:center; }
 input[type=checkbox] { width:15px; height:15px; accent-color:var(--accent); cursor:pointer; }
@@ -210,6 +216,20 @@ def _qs(**params):
     return "/?" + urllib.parse.urlencode(pairs) if pairs else "/"
 
 
+def _filter_qs(verdict, q, snoozed, age):
+    """The current queue filter as a bare query string, for alert detail links."""
+    pairs = []
+    if verdict:
+        pairs.append(("verdict", verdict))
+    if q:
+        pairs.append(("q", q))
+    if snoozed:
+        pairs.append(("snoozed", "1"))
+    if age:
+        pairs.append(("age", str(age)))
+    return urllib.parse.urlencode(pairs)
+
+
 def page(title, body):
     return (
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
@@ -219,14 +239,10 @@ def page(title, body):
     )
 
 
-def _masthead(show_back=False):
-    right = (
-        '<a class="back" href="/">&larr; back to queue</a>' if show_back else
-        '<span class="tagline">transparent alert triage</span>'
-    )
+def _masthead():
     return (
         '<div class="masthead"><span class="wordmark">si<b>ft</b>.</span>'
-        + right + "</div>"
+        '<span class="tagline">transparent alert triage</span></div>'
     )
 
 
@@ -280,13 +296,17 @@ def render_dashboard(alerts, counts, active_filter, q=None, snoozed=False, age=N
         + "</form>"
     )
 
+    filter_qs = _filter_qs(active_filter, q, snoozed, age)
+    detail_suffix = f"?{filter_qs}" if filter_qs else ""
+
     if alerts:
         rows = []
         for a in alerts:
             vc = VERDICT_CLASS.get(a["verdict"], "")
             desc = _esc(a["rule_desc"] or "")
+            href = f"/alert/{a['id']}{detail_suffix}"
             rows.append(
-                f'<tr class="{vc}" onclick="location.href=\'/alert/{a["id"]}\'" style="cursor:pointer">'
+                f'<tr class="{vc}" data-href="{href}" onclick="location.href=\'{href}\'" style="cursor:pointer">'
                 f'<td class="check" onclick="event.stopPropagation()">'
                 f'<input type="checkbox" name="ids" value="{a["id"]}"></td>'
                 f'<td class="time">{_fmt_time(a["received_at"])}</td>'
@@ -324,6 +344,24 @@ def render_dashboard(alerts, counts, active_filter, q=None, snoozed=False, age=N
             "document.getElementById('select-all').addEventListener('change',function(e){"
             "document.querySelectorAll('input[name=\"ids\"]').forEach(function(c){c.checked=e.target.checked;});"
             "});"
+            "(function(){"
+            "var rows=Array.prototype.slice.call(document.querySelectorAll('tbody tr'));"
+            "var i=-1;"
+            "function focus(n){"
+            "if(rows[i])rows[i].classList.remove('focused');"
+            "i=Math.max(0,Math.min(rows.length-1,n));"
+            "rows[i].classList.add('focused');"
+            "rows[i].scrollIntoView({block:'nearest'});"
+            "}"
+            "document.addEventListener('keydown',function(e){"
+            "var t=e.target.tagName;"
+            "if(t==='INPUT'||t==='SELECT'||t==='TEXTAREA'){if(e.key==='Escape')e.target.blur();return;}"
+            "if(e.key==='j'||e.key==='ArrowDown'){e.preventDefault();focus(i+1);}"
+            "else if(e.key==='k'||e.key==='ArrowUp'){e.preventDefault();focus(i-1);}"
+            "else if(e.key==='Enter'||e.key==='o'){if(i>=0)location.href=rows[i].dataset.href;}"
+            "else if(e.key==='/'){e.preventDefault();var s=document.querySelector('input[name=q]');if(s)s.focus();}"
+            "});"
+            "})();"
             "</script>"
             "</form>"
         )
@@ -350,7 +388,8 @@ def render_dashboard(alerts, counts, active_filter, q=None, snoozed=False, age=N
         )
 
     toolbar = '<div class="toolbar"><div class="chips">' + "".join(chips) + "</div>" + search + "</div>"
-    body = _masthead() + toolbar + table
+    hint = '<div class="hint">j/k or &uarr;/&darr; select &middot; enter open &middot; / search</div>' if alerts else ""
+    body = _masthead() + toolbar + hint + table
     return page("sift — triage queue", body)
 
 
@@ -408,7 +447,7 @@ def _facts_html(alert):
     return '<div class="facts"><dl>' + rows + "</dl></div>"
 
 
-def _feedback_html(alert):
+def _feedback_html(alert, filter_qs=""):
     if alert["analyst_verdict"] == "true_positive":
         return ('<div class="feedback"><div class="decided">Marked '
                 '<b class="tp">real threat</b> &middot; the rule\'s track record was updated.'
@@ -418,17 +457,20 @@ def _feedback_html(alert):
                 '<b class="fp">false alarm</b> &middot; this rule will be trusted less next time.'
                 "</div></div>")
     aid = alert["id"]
+    hidden = f'<input type="hidden" name="from" value="{_esc(filter_qs)}">' if filter_qs else ""
     return (
         '<div class="feedback"><p class="panel-label">Your call teaches sift</p>'
         f'<form method="post" action="/alert/{aid}/feedback">'
-        '<button class="btn tp" name="verdict" value="true_positive">Confirm real threat</button>'
-        '<button class="btn fp" name="verdict" value="false_positive">Mark false alarm</button>'
+        + hidden
+        + '<button class="btn tp" name="verdict" value="true_positive">Confirm real threat<kbd>t</kbd></button>'
+        '<button class="btn fp" name="verdict" value="false_positive">Mark false alarm<kbd>f</kbd></button>'
         "</form></div>"
     )
 
 
-def _snooze_html(alert):
+def _snooze_html(alert, filter_qs=""):
     aid = alert["id"]
+    hidden = f'<input type="hidden" name="from" value="{_esc(filter_qs)}">' if filter_qs else ""
     snoozed_until = alert.get("snoozed_until")
     active = False
     if snoozed_until:
@@ -442,13 +484,15 @@ def _snooze_html(alert):
             f'<div class="decided">Snoozed until <b>{_esc(_fmt_time(snoozed_until))}</b>'
             " &mdash; hidden from the queue until then.</div>"
             f'<form method="post" action="/alert/{aid}/unsnooze">'
-            '<button class="btn" type="submit">Wake now</button>'
+            + hidden
+            + '<button class="btn" type="submit">Wake now</button>'
             "</form></div>"
         )
     return (
         '<div class="snooze"><p class="panel-label">Snooze</p>'
         f'<form method="post" action="/alert/{aid}/snooze">'
-        '<button class="btn" name="hours" value="1">1h</button>'
+        + hidden
+        + '<button class="btn" name="hours" value="1">1h</button>'
         '<button class="btn" name="hours" value="4">4h</button>'
         '<button class="btn" name="hours" value="24">24h</button>'
         '<button class="btn" name="hours" value="168">7d</button>'
@@ -456,15 +500,39 @@ def _snooze_html(alert):
     )
 
 
-def render_detail(alert):
+def render_detail(alert, filter_qs="", prev_id=None, next_id=None):
     raw_pretty = json.dumps(json.loads(alert["raw_json"]), indent=2)
+    suffix = f"?{filter_qs}" if filter_qs else ""
+    nav = ['<a class="back" href="/' + suffix + '">&larr; back to queue</a>']
+    if prev_id:
+        nav.append(f'<a class="back" id="prev-link" href="/alert/{prev_id}{suffix}">&uarr; prev</a>')
+    if next_id:
+        nav.append(f'<a class="back" id="next-link" href="/alert/{next_id}{suffix}">&darr; next</a>')
+    masthead = (
+        '<div class="masthead"><span class="wordmark">si<b>ft</b>.</span>'
+        '<span class="nav-links">' + " ".join(nav) + "</span></div>"
+    )
+    hint = '<div class="hint">t confirm real &middot; f false alarm &middot; j/k next/prev &middot; b back</div>'
     left = (
         '<div><p class="panel-label">Alert</p>' + _facts_html(alert)
-        + _feedback_html(alert)
-        + _snooze_html(alert)
+        + _feedback_html(alert, filter_qs)
+        + _snooze_html(alert, filter_qs)
         + '<details class="raw"><summary>Raw alert JSON</summary><pre>'
         + _esc(raw_pretty) + "</pre></details></div>"
     )
     right = '<div><p class="panel-label">Receipt</p>' + _receipt_html(alert) + "</div>"
-    body = _masthead(show_back=True) + '<div class="detail">' + left + right + "</div>"
+    script = (
+        "<script>(function(){"
+        "function isTyping(t){return t==='INPUT'||t==='SELECT'||t==='TEXTAREA';}"
+        "document.addEventListener('keydown',function(e){"
+        "if(isTyping(e.target.tagName)){if(e.key==='Escape')e.target.blur();return;}"
+        "if(e.key==='t'){var b=document.querySelector('.feedback button[value=\"true_positive\"]');if(b)b.click();}"
+        "else if(e.key==='f'){var b2=document.querySelector('.feedback button[value=\"false_positive\"]');if(b2)b2.click();}"
+        "else if(e.key==='j'||e.key==='n'||e.key==='ArrowDown'){var nx=document.getElementById('next-link');if(nx)location.href=nx.href;}"
+        "else if(e.key==='k'||e.key==='p'||e.key==='ArrowUp'){var pv=document.getElementById('prev-link');if(pv)location.href=pv.href;}"
+        "else if(e.key==='b'||e.key==='Escape'){location.href=document.querySelector('a.back').href;}"
+        "});"
+        "})();</script>"
+    )
+    body = masthead + hint + '<div class="detail">' + left + right + "</div>" + script
     return page(f"sift — alert #{alert['id']}", body)

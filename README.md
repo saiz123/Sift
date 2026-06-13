@@ -316,10 +316,11 @@ roughly in order:
 - **Bulk actions & queue ergonomics** — the dashboard has a search box (filter
   by rule, target, source IP, or user, combinable with the verdict chips), an
   age filter ("older than 1h/24h/7d"), per-alert snooze (hide it from the
-  queue for a while, with a one-click "wake now"), and checkbox-driven bulk
+  queue for a while, with a one-click "wake now"), checkbox-driven bulk
   feedback (select rows, mark them all real/false in one click — the learning
-  loop catches up on a noisy rule immediately). Keyboard-driven triage is
-  still open.
+  loop catches up on a noisy rule immediately), and keyboard-driven triage
+  (`j`/`k` to move through the queue, `t`/`f` to decide an alert and
+  auto-advance to the next one in the same filter).
 - **More signals** — identity context (a user alerting from a source IP sift
   has never seen them use before) and allowlists for users/hashes are in.
   Still open: geo/ASN velocity, threat-intel beyond two feeds.

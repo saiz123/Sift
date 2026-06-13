@@ -52,6 +52,42 @@ WEBHOOK_NORMALIZERS = {
 }
 
 
+def _parse_filter(params):
+    """Extract the queue filter (verdict/q/snoozed/age) from parsed query params."""
+    verdict = params.get("verdict", [None])[0]
+    if verdict not in (None, "ESCALATE", "REVIEW", "JUNK"):
+        verdict = None
+    q = (params.get("q", [""])[0] or "").strip() or None
+    snoozed = params.get("snoozed", [""])[0] == "1"
+    age_raw = params.get("age", [""])[0]
+    age_hours = int(age_raw) if age_raw.isdigit() else None
+    return verdict, q, snoozed, age_hours
+
+
+def _filter_qs(verdict, q, snoozed, age_hours):
+    pairs = []
+    if verdict:
+        pairs.append(("verdict", verdict))
+    if q:
+        pairs.append(("q", q))
+    if snoozed:
+        pairs.append(("snoozed", "1"))
+    if age_hours:
+        pairs.append(("age", str(age_hours)))
+    return urllib.parse.urlencode(pairs)
+
+
+def _neighbor_ids(alert_id, verdict, q, snoozed, age_hours):
+    """The previous/next alert ids in the same filtered queue, for j/k navigation."""
+    ids = db.list_alert_ids(verdict_filter=verdict, q=q, snoozed=snoozed, min_age_hours=age_hours)
+    if alert_id not in ids:
+        return None, None
+    i = ids.index(alert_id)
+    prev_id = ids[i - 1] if i > 0 else None
+    next_id = ids[i + 1] if i + 1 < len(ids) else None
+    return prev_id, next_id
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "sift/1.0"
 
@@ -87,13 +123,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/":
             params = urllib.parse.parse_qs(parsed.query)
-            verdict = params.get("verdict", [None])[0]
-            if verdict not in (None, "ESCALATE", "REVIEW", "JUNK"):
-                verdict = None
-            q = (params.get("q", [""])[0] or "").strip() or None
-            snoozed = params.get("snoozed", [""])[0] == "1"
-            age_raw = params.get("age", [""])[0]
-            age_hours = int(age_raw) if age_raw.isdigit() else None
+            verdict, q, snoozed, age_hours = _parse_filter(params)
             alerts = db.list_alerts(
                 verdict_filter=verdict, q=q, snoozed=snoozed, min_age_hours=age_hours
             )
@@ -104,10 +134,17 @@ class Handler(BaseHTTPRequestHandler):
 
         m = re.fullmatch(r"/alert/(\d+)", path)
         if m:
-            alert = db.get_alert(int(m.group(1)))
+            alert_id = int(m.group(1))
+            alert = db.get_alert(alert_id)
             if not alert:
                 return self._send(404, views.page("Not found", "<p>No such alert.</p>"))
-            return self._send(200, views.render_detail(alert))
+            params = urllib.parse.parse_qs(parsed.query)
+            verdict, q, snoozed, age_hours = _parse_filter(params)
+            filter_qs = _filter_qs(verdict, q, snoozed, age_hours)
+            prev_id, next_id = _neighbor_ids(alert_id, verdict, q, snoozed, age_hours)
+            return self._send(200, views.render_detail(
+                alert, filter_qs=filter_qs, prev_id=prev_id, next_id=next_id
+            ))
 
         return self._send(404, views.page("Not found", "<p>Not found.</p>"))
 
@@ -167,7 +204,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json(400, {"error": "verdict must be true_positive or false_positive"})
         if not db.record_feedback(alert_id, verdict):
             return self._send_json(404, {"error": "no such alert"})
-        return self._redirect(f"/alert/{alert_id}")
+        from_qs = form.get("from", [""])[0]
+        suffix = f"?{from_qs}" if from_qs else ""
+        fverdict, fq, fsnoozed, fage = _parse_filter(urllib.parse.parse_qs(from_qs))
+        _, next_id = _neighbor_ids(alert_id, fverdict, fq, fsnoozed, fage)
+        if next_id:
+            return self._redirect(f"/alert/{next_id}{suffix}")
+        return self._redirect(f"/{suffix}")
 
     def _snooze(self, alert_id):
         form = urllib.parse.parse_qs(self._read_body().decode("utf-8"))
@@ -180,12 +223,17 @@ class Handler(BaseHTTPRequestHandler):
         until = (dt.datetime.now() + dt.timedelta(hours=hours)).isoformat(timespec="seconds")
         if not db.snooze_alert(alert_id, until):
             return self._send_json(404, {"error": "no such alert"})
-        return self._redirect(f"/alert/{alert_id}")
+        from_qs = form.get("from", [""])[0]
+        suffix = f"?{from_qs}" if from_qs else ""
+        return self._redirect(f"/alert/{alert_id}{suffix}")
 
     def _unsnooze(self, alert_id):
+        form = urllib.parse.parse_qs(self._read_body().decode("utf-8"))
         if not db.unsnooze_alert(alert_id):
             return self._send_json(404, {"error": "no such alert"})
-        return self._redirect(f"/alert/{alert_id}")
+        from_qs = form.get("from", [""])[0]
+        suffix = f"?{from_qs}" if from_qs else ""
+        return self._redirect(f"/alert/{alert_id}{suffix}")
 
     def _bulk_feedback(self):
         form = urllib.parse.parse_qs(self._read_body().decode("utf-8"))

@@ -109,8 +109,8 @@ def get_alert(alert_id):
         return dict(row) if row else None
 
 
-def list_alerts(verdict_filter=None, q=None, snoozed=False, min_age_hours=None, limit=200):
-    query = "SELECT * FROM alerts"
+def _alert_filters(verdict_filter, q, snoozed, min_age_hours):
+    """WHERE clauses + params shared by list_alerts and list_alert_ids."""
     clauses = []
     params = []
     now = _now()
@@ -134,11 +134,22 @@ def list_alerts(verdict_filter=None, q=None, snoozed=False, min_age_hours=None, 
         cutoff = (dt.datetime.now() - dt.timedelta(hours=min_age_hours)).isoformat(timespec="seconds")
         clauses.append("received_at <= ?")
         params.append(cutoff)
-    query += " WHERE " + " AND ".join(clauses)
-    query += " ORDER BY id DESC LIMIT ?"
-    params.append(limit)
+    return clauses, params
+
+
+def list_alerts(verdict_filter=None, q=None, snoozed=False, min_age_hours=None, limit=200):
+    clauses, params = _alert_filters(verdict_filter, q, snoozed, min_age_hours)
+    query = "SELECT * FROM alerts WHERE " + " AND ".join(clauses) + " ORDER BY id DESC LIMIT ?"
     with connect() as conn:
-        return [dict(r) for r in conn.execute(query, params).fetchall()]
+        return [dict(r) for r in conn.execute(query, params + [limit]).fetchall()]
+
+
+def list_alert_ids(verdict_filter=None, q=None, snoozed=False, min_age_hours=None, limit=200):
+    """Ordered alert ids for the same filter as list_alerts — used for prev/next navigation."""
+    clauses, params = _alert_filters(verdict_filter, q, snoozed, min_age_hours)
+    query = "SELECT id FROM alerts WHERE " + " AND ".join(clauses) + " ORDER BY id DESC LIMIT ?"
+    with connect() as conn:
+        return [r["id"] for r in conn.execute(query, params + [limit]).fetchall()]
 
 
 def verdict_counts():
