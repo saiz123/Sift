@@ -4,12 +4,30 @@ Send one alert file to a running sift and print the verdict it returns.
     python3 send_sample.py sample_alerts/real_attack.json
     python3 send_sample.py sample_alerts/real_attack.json http://127.0.0.1:8000
 
+The right /webhook/<source> endpoint is guessed from the shape of the JSON,
+so this works for any of the sample_alerts/ files (Wazuh, Suricata, Elastic,
+GuardDuty, generic) without extra flags.
+
 Handy for trying things out and for wiring into your own test scripts.
 """
 
 import json
 import sys
 import urllib.request
+
+
+def _guess_endpoint(raw):
+    if not isinstance(raw, dict):
+        return "/webhook/wazuh"
+    if "schemaVersion" in raw and "type" in raw and "severity" in raw:
+        return "/webhook/guardduty"
+    if raw.get("event_type") == "alert" and "alert" in raw:
+        return "/webhook/suricata"
+    if "rule" in raw and "agent" in raw:
+        return "/webhook/wazuh"
+    if "@timestamp" in raw:
+        return "/webhook/elastic"
+    return "/webhook/generic"
 
 
 def main():
@@ -23,8 +41,10 @@ def main():
     with open(path, "rb") as fh:
         body = fh.read()
 
+    endpoint = _guess_endpoint(json.loads(body.decode("utf-8")))
+
     req = urllib.request.Request(
-        base + "/webhook/wazuh", data=body,
+        base + endpoint, data=body,
         headers={"Content-Type": "application/json"}, method="POST",
     )
     try:

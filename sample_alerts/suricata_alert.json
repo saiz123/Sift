@@ -1,0 +1,19 @@
+{
+  "timestamp": "2025-06-13T03:22:10.123456+0000",
+  "event_type": "alert",
+  "src_ip": "45.146.165.37",
+  "src_port": 443,
+  "dest_ip": "10.0.0.5",
+  "dest_port": 49213,
+  "proto": "TCP",
+  "host": "sensor-01",
+  "alert": {
+    "action": "allowed",
+    "gid": 1,
+    "signature_id": 2024897,
+    "rev": 2,
+    "signature": "ET MALWARE Cobalt Strike Beacon Activity",
+    "category": "A Network Trojan was detected",
+    "severity": 1
+  }
+}

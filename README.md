@@ -63,7 +63,7 @@ for its full receipt.
 ## How it works
 
 ```
-   Wazuh alert ──POST──▶  /webhook/wazuh
+   SIEM alert ──POST──▶  /webhook/<source>
                               │
                    normalize (flatten the JSON)
                               │
@@ -143,9 +143,46 @@ Wazuh alert JSON as-is. (A small wrapper script under
 `/var/ossec/integrations/` is the usual way Wazuh delivers these — see the
 Wazuh integration docs for the exact shape on your version.)
 
-Not on Wazuh? `POST` any JSON to `/webhook/wazuh`; to support another SIEM's
-shape, add a sibling function to [`normalize.py`](normalize.py). Nothing
-downstream cares which SIEM an alert came from.
+---
+
+## Other sources
+
+sift normalises a few other formats out of the box, each on its own webhook
+route. Every route returns the same `{id, score, verdict, receipt}` JSON, and
+an `ESCALATE` verdict triggers the [outbound notification](#outbound-notifications-optional)
+just like a Wazuh alert.
+
+| Route | What to send |
+| --- | --- |
+| `POST /webhook/suricata` | One line of Suricata's `eve.json` (an `"event_type": "alert"` record). Other event types (flow, dns, http, ...) are accepted but skipped — point sift at the whole `eve.json` without flooding the queue. |
+| `POST /webhook/elastic` | An Elastic Common Schema (ECS) document — a Kibana detection alert via a webhook connector, or any ECS-shaped JSON from Beats/Elastic Agent/Logstash. |
+| `POST /webhook/guardduty` | An AWS GuardDuty finding (e.g. forwarded from EventBridge via a small Lambda, or replayed from the console's "View finding JSON"). |
+| `POST /webhook/generic` | Any JSON at all — fields are pulled out using the dotted paths in `config.GENERIC_FIELD_MAP`, no Python required. |
+
+Each source's severity is normalised onto sift's 0-15 scale (the same scale
+Wazuh rule levels use), so the *SIEM severity* signal and all the thresholds
+in [Configuration](#configuration) work identically no matter where an alert
+came from. The receipt's first line always says exactly how that mapping was
+done, e.g. `Suricata severity 1 (1=highest, 3=lowest) -> level 15 of 15` or
+`Elastic risk score 85/100 -> level 13 of 15`.
+
+Try any of them locally:
+
+```bash
+python3 send_sample.py sample_alerts/suricata_alert.json
+python3 send_sample.py sample_alerts/elastic_alert.json
+python3 send_sample.py sample_alerts/guardduty_finding.json
+python3 send_sample.py sample_alerts/generic_alert.json
+```
+
+`send_sample.py` guesses the right endpoint from the JSON's shape, so all
+five sample files (including the three Wazuh ones) work with the same
+command.
+
+None of these match your tool? `POST` any JSON to `/webhook/generic` and map
+its fields in `config.GENERIC_FIELD_MAP` — or add a sibling `normalize_*`
+function to [`normalize.py`](normalize.py) for a first-class integration.
+Nothing downstream cares which source an alert came from.
 
 ---
 
@@ -201,6 +238,9 @@ Everything tunable is in [`config.py`](config.py), commented:
 - `DUPLICATE_WINDOW_HOURS` / `DUPLICATE_FLOOD_COUNT` — duplicate-flood thresholds
 - `NOISY_RULE_CONFIDENCE_Z` — how conservatively the learning loop reads a
   rule's false-positive track record
+- `GENERIC_FIELD_MAP` — dotted-path field mapping for `POST /webhook/generic`,
+  for wiring up a tool that doesn't have a dedicated normaliser
+  (see [Other sources](#other-sources))
 
 Edit, save, restart.
 
@@ -211,15 +251,15 @@ Edit, save, restart.
 ```
 sift.py          HTTP server + routing (entry point)
 config.py        all the dials you tune
-normalize.py     raw Wazuh JSON  ->  flat internal alert
+normalize.py     raw alert JSON (Wazuh, Suricata, Elastic, GuardDuty, generic) -> flat internal alert
 checks.py        the signals — each returns one receipt line or nothing
 scorer.py        gather context, run checks, sum to a score + verdict
 enrich.py        optional AbuseIPDB / VirusTotal lookups
 notify.py        optional chat webhook on ESCALATE
 db.py            SQLite: alerts, per-rule track record, enrichment cache
 views.py         the dashboard and the receipt page
-send_sample.py   push an alert file at a running sift
-sample_alerts/   three alerts that land in each of the three buckets
+send_sample.py   push an alert file at a running sift (guesses the endpoint)
+sample_alerts/   one alert per source — the three Wazuh ones cover JUNK/REVIEW/ESCALATE
 ```
 
 ---
@@ -245,7 +285,9 @@ roughly in order:
 - **More signals** — identity context (a user alerting from a source IP sift
   has never seen them use before) and allowlists for users/hashes are in.
   Still open: geo/ASN velocity, threat-intel beyond two feeds.
-- **More sources** — Suricata, Elastic, GuardDuty, M365 — each a new normaliser.
+- **More sources** — Suricata, Elastic/ECS, AWS GuardDuty, and a config-driven
+  generic JSON mapper are in (see [Other sources](#other-sources)). Still
+  open: M365 / Microsoft Graph security alerts, CrowdStrike, osquery.
 - **Outbound actions** — sift can POST a short summary to a Slack/Mattermost/
   Discord webhook on ESCALATE (see [Outbound notifications](#outbound-notifications-optional)).
   Still open: push verdicts back to TheHive / a ticketing system; keep the

@@ -26,9 +26,13 @@ ESCALATE_AT = 60
 # These are the dials you'll turn most often as you learn your environment.
 # ---------------------------------------------------------------------------
 WEIGHTS = {
-    # Trust the SIEM's own severity as a baseline: points = level * multiplier.
-    # A Wazuh rule at level 12 contributes 12 * 4 = 48 points.
-    "wazuh_level_multiplier": 4,
+    # Trust the source's own severity as a baseline: points = level * multiplier,
+    # where level is the alert's severity normalised onto sift's 0-15 scale
+    # (see normalize.py — every source maps its own scale onto this one).
+    # A rule at level 12 contributes 12 * 4 = 48 points, regardless of
+    # whether it came from Wazuh, Suricata, Elastic, GuardDuty, or a generic
+    # source.
+    "severity_multiplier": 4,
 
     # Source IP flagged as malicious by AbuseIPDB (needs ABUSEIPDB_KEY).
     "bad_ip": 50,
@@ -126,6 +130,30 @@ NOISY_RULE_CONFIDENCE_Z = 1.96
 # A user needs at least this many prior alerts before "never seen from this
 # IP" is meaningful. Stops every user's very first alert from being flagged.
 MIN_OBSERVATIONS_FOR_USER_HISTORY = 3
+
+# ---------------------------------------------------------------------------
+# Generic source (POST /webhook/generic).
+#
+# Map sift's flat alert fields onto dotted paths into *your* tool's JSON, so
+# any alerting tool can be wired up without writing a Python normaliser. A
+# path of "alert.severity" reads raw["alert"]["severity"]; leave a field
+# pointing at "" or remove it if your tool has no equivalent.
+#
+# "severity" is read as a raw number and scaled onto sift's 0-15 range using
+# "severity_max" as the top of your tool's scale — e.g. 10 for a 0-10 scale,
+# 100 for a 0-100 risk score, 8.9 for AWS GuardDuty's scale.
+# ---------------------------------------------------------------------------
+GENERIC_FIELD_MAP = {
+    "rule_id": "alert.id",
+    "rule_desc": "alert.name",
+    "src_ip": "source.ip",
+    "src_user": "user.name",
+    "target": "host.name",
+    "file_hash": "file.hash.sha256",
+    "timestamp": "timestamp",
+    "severity": "alert.severity",
+    "severity_max": 10,
+}
 
 # ---------------------------------------------------------------------------
 # Server

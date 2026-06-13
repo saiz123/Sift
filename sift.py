@@ -3,7 +3,7 @@ sift — transparent, self-hosted alert triage.
 
 Run it:           python3 sift.py
 Then send alerts: python3 send_sample.py sample_alerts/real_attack.json
-Or point Wazuh:   POST your alerts to  http://<host>:<port>/webhook/wazuh
+Or point a SIEM:  POST your alerts to  http://<host>:<port>/webhook/<source>
 
 Routes
   GET  /                     triage queue (optional ?verdict=&q=&snoozed=1&age=<hours>)
@@ -12,7 +12,12 @@ Routes
   POST /alert/<id>/snooze    hide this alert from the queue for N hours
   POST /alert/<id>/unsnooze  bring a snoozed alert back into the queue now
   POST /bulk-feedback        record an analyst verdict for many alerts at once
-  POST /webhook/wazuh        ingest one Wazuh alert; returns the verdict as JSON
+  POST /webhook/wazuh        ingest a raw Wazuh alert
+  POST /webhook/suricata     ingest a Suricata EVE JSON "alert" event
+  POST /webhook/elastic      ingest an Elastic/ECS detection alert
+  POST /webhook/guardduty    ingest an AWS GuardDuty finding
+  POST /webhook/generic      ingest any JSON, mapped via config.GENERIC_FIELD_MAP
+                             (each /webhook/* route returns the verdict as JSON)
   GET  /healthz              liveness check
 
 Pure Python standard library — no pip install, nothing to pull from a CDN.
@@ -28,8 +33,23 @@ import config
 import db
 import notify
 import views
-from normalize import normalize_wazuh
+from normalize import (
+    normalize_elastic,
+    normalize_generic,
+    normalize_guardduty,
+    normalize_suricata,
+    normalize_wazuh,
+)
 from scorer import score_alert
+
+
+WEBHOOK_NORMALIZERS = {
+    "/webhook/wazuh": normalize_wazuh,
+    "/webhook/suricata": normalize_suricata,
+    "/webhook/elastic": normalize_elastic,
+    "/webhook/guardduty": normalize_guardduty,
+    "/webhook/generic": normalize_generic,
+}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -94,8 +114,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = urllib.parse.urlparse(self.path).path
 
-        if path == "/webhook/wazuh":
-            return self._ingest()
+        normalize_fn = WEBHOOK_NORMALIZERS.get(path)
+        if normalize_fn:
+            return self._ingest(normalize_fn)
 
         m = re.fullmatch(r"/alert/(\d+)/feedback", path)
         if m:
@@ -118,13 +139,16 @@ class Handler(BaseHTTPRequestHandler):
         self.do_GET()
 
     # --- actions ----------------------------------------------------------
-    def _ingest(self):
+    def _ingest(self, normalize_fn):
         try:
             raw = json.loads(self._read_body().decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
             return self._send_json(400, {"error": "body must be valid JSON"})
 
-        alert = normalize_wazuh(raw)
+        alert = normalize_fn(raw)
+        if alert is None:
+            return self._send_json(200, {"status": "skipped"})
+
         score, verdict, receipt = score_alert(alert)
         alert_id = db.insert_alert(alert, score, verdict, receipt)
         if verdict == "ESCALATE":
@@ -186,7 +210,8 @@ def main():
     server = ThreadingHTTPServer((config.HOST, config.PORT), Handler)
     print("\n  sift is listening")
     print(f"  dashboard : http://{config.HOST}:{config.PORT}/")
-    print(f"  webhook   : http://{config.HOST}:{config.PORT}/webhook/wazuh")
+    sources = ", ".join(sorted(p.rsplit("/", 1)[1] for p in WEBHOOK_NORMALIZERS))
+    print(f"  webhooks  : http://{config.HOST}:{config.PORT}/webhook/<source>  ({sources})")
     keys = []
     if config.ABUSEIPDB_KEY:
         keys.append("AbuseIPDB")

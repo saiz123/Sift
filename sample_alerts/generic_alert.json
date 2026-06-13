@@ -1,0 +1,11 @@
+{
+  "timestamp": "2025-06-12T15:30:00Z",
+  "alert": {
+    "id": "ALRT-10293",
+    "name": "Multiple failed login attempts",
+    "severity": 3
+  },
+  "source": { "ip": "203.0.113.77" },
+  "user": { "name": "jdoe" },
+  "host": { "name": "ws-0231" }
+}

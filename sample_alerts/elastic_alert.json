@@ -1,0 +1,16 @@
+{
+  "@timestamp": "2025-06-13T03:05:00.000Z",
+  "event": { "kind": "signal", "category": ["process"], "severity": 73 },
+  "rule": {
+    "id": "f3475224-b199-4f3d-8d3f-1bdc5e34a6e9",
+    "name": "Potential Credential Dumping via LSASS Access",
+    "description": "A process accessed LSASS memory in a manner consistent with credential dumping tools such as Mimikatz.",
+    "severity": "critical",
+    "risk_score": 85
+  },
+  "source": { "ip": "45.146.165.37" },
+  "destination": { "ip": "10.0.0.9" },
+  "host": { "name": "dc01" },
+  "user": { "name": "svc_backup" },
+  "file": { "hash": { "sha256": "5d41402abc4b2a76b9719d911017c592e7d8b0c2a1f4e6c9aa00112233445566" } }
+}

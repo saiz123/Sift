@@ -62,16 +62,13 @@ def _wilson_lower_bound(successes, total, z):
 # by the scorer so individual checks stay cheap and pure.
 
 
-def check_wazuh_level(alert, ctx):
+def check_severity(alert, ctx):
     level = alert.get("rule_level") or 0
     if level <= 0:
         return None
-    points = level * config.WEIGHTS["wazuh_level_multiplier"]
-    return _line(
-        "SIEM severity",
-        points,
-        f"Wazuh rule level {level} of 15",
-    )
+    points = level * config.WEIGHTS["severity_multiplier"]
+    detail = alert.get("severity_detail") or f"Severity level {level} of 15"
+    return _line("SIEM severity", points, detail)
 
 
 def check_bad_ip(alert, ctx):
@@ -226,7 +223,7 @@ def check_duplicate_flood(alert, ctx):
 
 # Order here is the order line items appear on the receipt.
 ALL_CHECKS = [
-    check_wazuh_level,
+    check_severity,
     check_critical_asset,
     check_bad_ip,
     check_bad_hash,

@@ -65,6 +65,8 @@ def init_db():
         cols = {row["name"] for row in conn.execute("PRAGMA table_info(alerts)").fetchall()}
         if "snoozed_until" not in cols:
             conn.execute("ALTER TABLE alerts ADD COLUMN snoozed_until TEXT")
+        if "source" not in cols:
+            conn.execute("ALTER TABLE alerts ADD COLUMN source TEXT")
 
 
 def _now():
@@ -77,13 +79,14 @@ def insert_alert(alert, score, verdict, receipt):
     with connect() as conn:
         cur = conn.execute(
             """
-            INSERT INTO alerts (received_at, rule_id, rule_desc, rule_level,
+            INSERT INTO alerts (received_at, source, rule_id, rule_desc, rule_level,
                                 src_ip, src_user, target, file_hash,
                                 score, verdict, receipt_json, raw_json)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             (
                 _now(),
+                alert.get("source"),
                 alert.get("rule_id"),
                 alert.get("rule_desc"),
                 alert.get("rule_level"),

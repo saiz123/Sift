@@ -290,6 +290,7 @@ def render_dashboard(alerts, counts, active_filter, q=None, snoozed=False, age=N
                 f'<td class="check" onclick="event.stopPropagation()">'
                 f'<input type="checkbox" name="ids" value="{a["id"]}"></td>'
                 f'<td class="time">{_fmt_time(a["received_at"])}</td>'
+                f'<td class="mono">{_esc(a.get("source") or "—")}</td>'
                 f'<td><span class="mono">{_esc(a["rule_id"] or "—")}</span>'
                 f'<div class="rule-desc">{desc}</div></td>'
                 f'<td class="mono">{_esc(a["target"] or "—")}</td>'
@@ -312,7 +313,7 @@ def render_dashboard(alerts, counts, active_filter, q=None, snoozed=False, age=N
             + bulk_hidden
             + '<div class="table-wrap"><table><thead><tr>'
             '<th class="check"><input type="checkbox" id="select-all" title="select all"></th>'
-            "<th>Time</th><th>Rule</th><th>Target</th><th>Source IP</th>"
+            "<th>Time</th><th>Source</th><th>Rule</th><th>Target</th><th>Source IP</th>"
             "<th style=\"text-align:right\">Score</th><th>Verdict</th>"
             "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>"
             '<div class="bulk-actions"><span class="bulk-label">With selected:</span>'
@@ -390,9 +391,10 @@ def _receipt_html(alert):
 
 def _facts_html(alert):
     fields = [
+        ("Source", alert.get("source")),
         ("Rule", alert["rule_id"]),
         ("Description", alert["rule_desc"]),
-        ("Level", alert["rule_level"]),
+        ("Severity (0–15)", alert["rule_level"]),
         ("Target", alert["target"]),
         ("Source IP", alert["src_ip"]),
         ("Source user", alert["src_user"]),

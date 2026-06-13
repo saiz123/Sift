@@ -1,11 +1,30 @@
 """
-Turn a raw Wazuh alert into the small, flat shape the scorer understands.
+Turn a raw alert from any supported source into the small, flat shape the
+scorer understands.
 
-Wazuh alerts are deeply nested and vary by rule type, so we reach into the
+Source alerts are deeply nested and vary by rule type, so we reach into the
 likely places for each field and fall back gracefully when something's
-missing. Adding a second SIEM later means adding a sibling normaliser here;
-nothing downstream needs to know which SIEM an alert came from.
+missing. Adding a new source means adding a sibling normaliser here and
+wiring it to a route in sift.py; nothing downstream needs to know which tool
+an alert came from.
+
+Every normaliser returns either ``None`` (skip this payload — e.g. a
+Suricata "flow" event that isn't an alert) or a dict with these keys:
+
+    source          short name of the source, e.g. "wazuh"
+    rule_id         the source's rule/signature/finding identifier
+    rule_desc       a human description of what fired
+    rule_level      severity normalised onto sift's 0-15 scale
+    severity_detail a sentence explaining how rule_level was derived
+    src_ip          the source/attacker IP, if any
+    src_user        the user involved, if any
+    target          the asset the alert concerns (host, instance, etc.)
+    file_hash       a file hash involved, if any
+    timestamp       the source's own timestamp for the event
+    raw             the untouched original payload
 """
+
+import config
 
 
 def _dig(d, *path, default=None):
@@ -19,11 +38,39 @@ def _dig(d, *path, default=None):
     return cur
 
 
+def _dig_path(d, path, default=None):
+    """Like _dig, but the path is a single dotted string, e.g. "alert.severity"."""
+    if not path:
+        return default
+    return _dig(d, *str(path).split("."), default=default)
+
+
 def _first(*values):
     for v in values:
         if v not in (None, "", []):
             return v
     return None
+
+
+def _clamp_level(value):
+    """Round to the nearest int and clamp onto sift's 0-15 severity scale."""
+    try:
+        level = round(float(value))
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(15, level))
+
+
+def _scale_to_15(value, max_value):
+    """Map a 0..max_value severity onto sift's 0-15 scale."""
+    try:
+        value = float(value)
+        max_value = float(max_value)
+    except (TypeError, ValueError):
+        return 0
+    if max_value <= 0:
+        return 0
+    return _clamp_level(value / max_value * 15)
 
 
 def normalize_wazuh(raw):
@@ -60,13 +107,213 @@ def normalize_wazuh(raw):
     )
 
     return {
+        "source": "wazuh",
         "rule_id": str(rule.get("id")) if rule.get("id") is not None else None,
         "rule_desc": rule.get("description"),
         "rule_level": level,
+        "severity_detail": f"Wazuh rule level {level} of 15",
         "src_ip": src_ip,
         "src_user": _first(data.get("srcuser"), data.get("dstuser"), data.get("user")),
         "target": target,
         "file_hash": file_hash,
         "timestamp": raw.get("timestamp"),
+        "raw": raw,
+    }
+
+
+def normalize_suricata(raw):
+    """
+    Turn a Suricata EVE JSON "alert" event into sift's flat shape.
+
+    eve.json carries many event types (flow, dns, http, tls, ...); only
+    "alert" events represent a signature firing, so anything else is skipped
+    by returning None — point sift at the whole eve.json without flooding
+    the queue with non-alert traffic records.
+    """
+    if not isinstance(raw, dict):
+        return None
+    alert = raw.get("alert")
+    if raw.get("event_type") != "alert" or not isinstance(alert, dict):
+        return None
+
+    fileinfo = raw.get("fileinfo") if isinstance(raw.get("fileinfo"), dict) else {}
+
+    try:
+        severity = int(alert.get("severity", 3))
+    except (TypeError, ValueError):
+        severity = 3
+
+    # Suricata severity runs 1 (highest priority) to 3 (lowest) — the
+    # opposite direction from sift's scale, so flip it before spreading it
+    # across 0-15.
+    level = _clamp_level((4 - severity) * 5)
+
+    sig_id = alert.get("signature_id")
+
+    return {
+        "source": "suricata",
+        "rule_id": str(sig_id) if sig_id is not None else None,
+        "rule_desc": _first(alert.get("signature"), alert.get("category")),
+        "rule_level": level,
+        "severity_detail": f"Suricata severity {severity} (1=highest, 3=lowest) -> level {level} of 15",
+        "src_ip": raw.get("src_ip"),
+        "src_user": None,
+        "target": _first(raw.get("dest_ip"), raw.get("host")),
+        "file_hash": _first(fileinfo.get("sha256"), fileinfo.get("md5")),
+        "timestamp": raw.get("timestamp"),
+        "raw": raw,
+    }
+
+
+# ECS's free-text rule.severity (low/medium/high/critical) spread evenly
+# across sift's 0-15 scale.
+_ECS_SEVERITY_LEVELS = {"low": 4, "medium": 8, "high": 12, "critical": 15}
+
+
+def normalize_elastic(raw):
+    """
+    Turn an Elastic Common Schema (ECS) document — e.g. a Kibana detection
+    alert sent via a webhook connector, or any ECS-shaped JSON from Beats/
+    Elastic Agent/Logstash — into sift's flat shape.
+    """
+    if not isinstance(raw, dict):
+        return None
+
+    rule = raw.get("rule") if isinstance(raw.get("rule"), dict) else {}
+    event = raw.get("event") if isinstance(raw.get("event"), dict) else {}
+    source = raw.get("source") if isinstance(raw.get("source"), dict) else {}
+    destination = raw.get("destination") if isinstance(raw.get("destination"), dict) else {}
+    host = raw.get("host") if isinstance(raw.get("host"), dict) else {}
+    user = raw.get("user") if isinstance(raw.get("user"), dict) else {}
+    file_ = raw.get("file") if isinstance(raw.get("file"), dict) else {}
+    file_hash = file_.get("hash") if isinstance(file_.get("hash"), dict) else {}
+
+    label = (rule.get("severity") or "").lower()
+    risk_score = _first(rule.get("risk_score"), event.get("risk_score"))
+
+    if label in _ECS_SEVERITY_LEVELS:
+        level = _ECS_SEVERITY_LEVELS[label]
+        severity_detail = f"Elastic rule severity '{label}' -> level {level} of 15"
+    elif risk_score is not None:
+        level = _scale_to_15(risk_score, 100)
+        severity_detail = f"Elastic risk score {risk_score}/100 -> level {level} of 15"
+    elif event.get("severity") is not None:
+        raw_severity = event.get("severity")
+        level = _scale_to_15(raw_severity, 100)
+        severity_detail = f"Elastic event severity {raw_severity} -> level {level} of 15"
+    else:
+        level = 0
+        severity_detail = "Elastic alert carried no severity field"
+
+    rule_id = _first(rule.get("id"), rule.get("uuid"))
+
+    return {
+        "source": "elastic",
+        "rule_id": str(rule_id) if rule_id is not None else None,
+        "rule_desc": _first(rule.get("description"), rule.get("name")),
+        "rule_level": level,
+        "severity_detail": severity_detail,
+        "src_ip": source.get("ip"),
+        "src_user": user.get("name"),
+        "target": _first(host.get("name"), destination.get("ip")),
+        "file_hash": _first(file_hash.get("sha256"), file_hash.get("md5"), file_hash.get("sha1")),
+        "timestamp": raw.get("@timestamp"),
+        "raw": raw,
+    }
+
+
+def _guardduty_remote_ip(raw):
+    """GuardDuty buries the attacker IP under whichever action type fired."""
+    action = _dig(raw, "service", "action", default={})
+    if not isinstance(action, dict):
+        return None
+    for action_key in (
+        "networkConnectionAction",
+        "awsApiCallAction",
+        "portProbeAction",
+        "kubernetesApiCallAction",
+    ):
+        details = action.get(action_key)
+        if not isinstance(details, dict):
+            continue
+        remote = details.get("remoteIpDetails")
+        if isinstance(remote, dict) and remote.get("ipAddressV4"):
+            return remote["ipAddressV4"]
+        for probe in details.get("portProbeDetails") or []:
+            remote = _dig(probe, "remoteIpDetails", default={})
+            if isinstance(remote, dict) and remote.get("ipAddressV4"):
+                return remote["ipAddressV4"]
+    return None
+
+
+def normalize_guardduty(raw):
+    """Turn an AWS GuardDuty finding into sift's flat shape."""
+    if not isinstance(raw, dict):
+        return None
+    if "type" not in raw or "severity" not in raw:
+        return None
+
+    try:
+        severity = float(raw.get("severity", 0))
+    except (TypeError, ValueError):
+        severity = 0.0
+
+    # GuardDuty severity runs 0.1 (informational) to 8.9 (critical).
+    level = _scale_to_15(severity, 8.9)
+
+    instance_id = _dig(raw, "resource", "instanceDetails", "instanceId")
+    access_key_user = _dig(raw, "resource", "accessKeyDetails", "userName")
+
+    return {
+        "source": "guardduty",
+        "rule_id": raw.get("type"),
+        "rule_desc": _first(raw.get("title"), raw.get("description")),
+        "rule_level": level,
+        "severity_detail": f"GuardDuty severity {severity:g} of 8.9 -> level {level} of 15",
+        "src_ip": _guardduty_remote_ip(raw),
+        "src_user": access_key_user,
+        "target": _first(instance_id, raw.get("accountId")),
+        "file_hash": None,
+        "timestamp": _first(raw.get("updatedAt"), raw.get("createdAt")),
+        "raw": raw,
+    }
+
+
+def normalize_generic(raw):
+    """
+    Turn arbitrary JSON into sift's flat shape using config.GENERIC_FIELD_MAP
+    — a dict of dotted paths into `raw`, one per sift field, configured by
+    the user for whatever tool they're wiring up. No Python required.
+    """
+    if not isinstance(raw, dict):
+        return None
+
+    field_map = config.GENERIC_FIELD_MAP
+
+    def get(field):
+        return _dig_path(raw, field_map.get(field))
+
+    severity_raw = get("severity")
+    severity_max = field_map.get("severity_max", 15)
+    if severity_raw is not None:
+        level = _scale_to_15(severity_raw, severity_max)
+        severity_detail = f"severity {severity_raw}/{severity_max} -> level {level} of 15"
+    else:
+        level = 0
+        severity_detail = "no severity field configured in GENERIC_FIELD_MAP"
+
+    rule_id = get("rule_id")
+
+    return {
+        "source": "generic",
+        "rule_id": str(rule_id) if rule_id is not None else None,
+        "rule_desc": get("rule_desc"),
+        "rule_level": level,
+        "severity_detail": severity_detail,
+        "src_ip": get("src_ip"),
+        "src_user": get("src_user"),
+        "target": get("target"),
+        "file_hash": get("file_hash"),
+        "timestamp": get("timestamp"),
         "raw": raw,
     }
