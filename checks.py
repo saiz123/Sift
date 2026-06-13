@@ -149,6 +149,23 @@ def check_new_source_for_user(alert, ctx):
     )
 
 
+def check_velocity(alert, ctx):
+    user = alert.get("src_user")
+    ip = alert.get("src_ip")
+    if not user or not ip:
+        return None
+    ips = (ctx.get("recent_ips") or set()) | {ip}
+    if len(ips) < config.VELOCITY_IP_THRESHOLD:
+        return None
+    return _line(
+        "Source-IP velocity",
+        config.WEIGHTS["velocity"],
+        f"'{user}' alerted from {len(ips)} different source IPs "
+        f"({', '.join(sorted(ips))}) within {config.VELOCITY_WINDOW_HOURS}h — "
+        f"possible impossible travel or a shared/stolen credential",
+    )
+
+
 def check_allowlisted_ip(alert, ctx):
     ip = alert.get("src_ip")
     if ip and _ip_in_list(ip, config.ALLOWLIST_IPS):
@@ -229,6 +246,7 @@ ALL_CHECKS = [
     check_bad_hash,
     check_off_hours,
     check_new_source_for_user,
+    check_velocity,
     check_noisy_rule,
     check_duplicate_flood,
     check_allowlisted_ip,

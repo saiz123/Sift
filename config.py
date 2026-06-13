@@ -50,6 +50,12 @@ WEIGHTS = {
     # could be a new device, could be a stolen credential used elsewhere.
     "new_source_for_user": 25,
 
+    # This user has alerted from VELOCITY_IP_THRESHOLD+ different source IPs
+    # within VELOCITY_WINDOW_HOURS — classic impossible-travel / shared- or
+    # stolen-credential pattern, derived purely from sift's own history (no
+    # GeoIP database needed).
+    "velocity": 35,
+
     # The source IP is on your trusted allowlist — strong pull toward junk.
     "allowlisted_ip": -60,
 
@@ -130,6 +136,17 @@ NOISY_RULE_CONFIDENCE_Z = 1.96
 # A user needs at least this many prior alerts before "never seen from this
 # IP" is meaningful. Stops every user's very first alert from being flagged.
 MIN_OBSERVATIONS_FOR_USER_HISTORY = 3
+
+# ---------------------------------------------------------------------------
+# Velocity (impossible-travel style, without a GeoIP database).
+#
+# If a single user shows up in alerts from VELOCITY_IP_THRESHOLD or more
+# distinct source IPs within VELOCITY_WINDOW_HOURS, that's the same shape of
+# anomaly "impossible travel" rules look for — just measured in IP diversity
+# over time instead of geographic distance.
+# ---------------------------------------------------------------------------
+VELOCITY_WINDOW_HOURS = 1
+VELOCITY_IP_THRESHOLD = 3
 
 # ---------------------------------------------------------------------------
 # Generic source (POST /webhook/generic).

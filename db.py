@@ -214,6 +214,27 @@ def count_recent_duplicates(rule_id, src_ip, window_hours):
     return row["n"]
 
 
+def recent_distinct_source_ips(src_user, window_hours):
+    """
+    Distinct source IPs this user has alerted from within the last
+    window_hours — feeds the velocity (impossible-travel) signal.
+    """
+    if not src_user:
+        return set()
+    cutoff = (
+        dt.datetime.now() - dt.timedelta(hours=window_hours)
+    ).isoformat(timespec="seconds")
+    with connect() as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT src_ip FROM alerts
+            WHERE src_user = ? AND received_at >= ? AND src_ip IS NOT NULL
+            """,
+            (src_user, cutoff),
+        ).fetchall()
+    return {r["src_ip"] for r in rows}
+
+
 def user_source_history(src_user, src_ip):
     """
     How many prior alerts mention this user, and has this user + source IP

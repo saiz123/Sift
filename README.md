@@ -130,6 +130,7 @@ transparency, not in cleverness you can't audit.
 | Malicious file hash | `+50` | VirusTotal flagged the file *(needs key)* |
 | Outside business hours | `+15` | activity at an unusual time |
 | Unfamiliar source for user | `+25` | this user has never alerted from this IP before |
+| Source-IP velocity | `+35` | this user alerted from 3+ different source IPs within an hour — impossible travel without needing a GeoIP database |
 | Historically noisy rule | up to `−45` | analysts keep marking this rule a false alarm |
 | Repeated noise | `−20` | a flood of identical alerts (scanner-like) |
 | Trusted source | `−60` | the source IP is on your allowlist |
@@ -278,6 +279,9 @@ Everything tunable is in [`config.py`](config.py), commented:
 - `DUPLICATE_WINDOW_HOURS` / `DUPLICATE_FLOOD_COUNT` — duplicate-flood thresholds
 - `NOISY_RULE_CONFIDENCE_Z` — how conservatively the learning loop reads a
   rule's false-positive track record
+- `VELOCITY_WINDOW_HOURS` / `VELOCITY_IP_THRESHOLD` — how many distinct
+  source IPs a user can alert from in how short a window before it looks
+  like impossible travel
 - `GENERIC_FIELD_MAP` — dotted-path field mapping for `POST /webhook/generic`,
   for wiring up a tool that doesn't have a dedicated normaliser
   (see [Other sources](#other-sources))
@@ -324,8 +328,9 @@ roughly in order:
   (`j`/`k` to move through the queue, `t`/`f` to decide an alert and
   auto-advance to the next one in the same filter).
 - **More signals** — identity context (a user alerting from a source IP sift
-  has never seen them use before) and allowlists for users/hashes are in.
-  Still open: geo/ASN velocity, threat-intel beyond two feeds.
+  has never seen them use before), source-IP velocity (impossible travel,
+  derived from sift's own history — no GeoIP database needed), and allowlists
+  for users/hashes are in. Still open: threat-intel beyond two feeds.
 - **More sources** — Suricata, Elastic/ECS, AWS GuardDuty, M365/Microsoft
   Graph security alerts, and a config-driven generic JSON mapper are in (see
   [Other sources](#other-sources)). Still open: CrowdStrike, osquery.
