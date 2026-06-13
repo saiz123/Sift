@@ -1,0 +1,18 @@
+{
+  "timestamp": "2025-06-13T03:14:07.512+0000",
+  "rule": {
+    "id": "92052",
+    "level": 12,
+    "description": "Suspicious process execution consistent with credential dumping",
+    "groups": ["windows", "sysmon", "attack.credential_access"],
+    "firedtimes": 1
+  },
+  "agent": { "id": "004", "name": "dc01", "ip": "10.0.0.9" },
+  "data": {
+    "srcip": "45.146.165.37",
+    "srcuser": "svc_backup",
+    "sha256": "5d41402abc4b2a76b9719d911017c592e7d8b0c2a1f4e6c9aa00112233445566"
+  },
+  "full_log": "Process Create: Image=C:\\Windows\\Temp\\m.exe ParentImage=powershell.exe",
+  "location": "WinEvtLog"
+}

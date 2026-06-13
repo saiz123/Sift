@@ -1,0 +1,14 @@
+# sift runtime
+sift.db
+sift.db-shm
+sift.db-wal
+server.log
+.env
+
+# packaged source bundle (redundant with extracted files)
+sift.zip
+
+# python
+__pycache__/
+*.pyc
+.venv/

@@ -1,0 +1,14 @@
+{
+  "timestamp": "2025-06-13T11:22:03.000+0000",
+  "rule": {
+    "id": "5710",
+    "level": 5,
+    "description": "sshd: Attempt to login using a non-existent user",
+    "groups": ["syslog", "sshd", "authentication_failed"],
+    "firedtimes": 88
+  },
+  "agent": { "id": "002", "name": "web-frontend-02", "ip": "10.10.5.23" },
+  "data": { "srcip": "10.10.5.23", "srcport": "54122" },
+  "full_log": "sshd[2211]: Invalid user test from 10.10.5.23 port 54122",
+  "location": "/var/log/auth.log"
+}

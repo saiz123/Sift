@@ -1,0 +1,14 @@
+{
+  "timestamp": "2025-06-13T14:05:41.000+0000",
+  "rule": {
+    "id": "5402",
+    "level": 7,
+    "description": "Successful sudo to ROOT executed",
+    "groups": ["syslog", "sudo"],
+    "firedtimes": 2
+  },
+  "agent": { "id": "011", "name": "build-runner-07", "ip": "10.20.1.44" },
+  "data": { "srcip": "10.20.1.44", "srcuser": "deploy", "dstuser": "root" },
+  "full_log": "sudo: deploy : TTY=pts/0 ; USER=root ; COMMAND=/usr/bin/apt upgrade",
+  "location": "/var/log/auth.log"
+}
