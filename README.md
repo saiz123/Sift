@@ -260,9 +260,25 @@ Target: dc01  Source: 45.146.165.37
 Top signals: SIEM severity (+48); Critical asset (+30); Outside business hours (+15)
 ```
 
-The POST runs on a background thread with a short timeout — a slow or
-unreachable webhook never delays or breaks alert ingestion. Leave it unset
-and sift stays exactly as before.
+Each POST runs on its own background thread with a short timeout — a slow or
+unreachable endpoint never delays or breaks alert ingestion. Leave a setting
+unset and sift stays exactly as before.
+
+#### TheHive (optional)
+
+Set both `THEHIVE_URL` and `THEHIVE_API_KEY` (env var or `.env`) and sift
+will also create a TheHive alert for every ESCALATE verdict — title, the
+full receipt as the description, severity mapped from the score, and tags
+for the source and rule:
+
+```bash
+export THEHIVE_URL=https://thehive.example.org
+export THEHIVE_API_KEY=...
+```
+
+The alert's `sourceRef` is sift's own alert id, so a TheHive analyst can
+trace it straight back to the receipt at `/alert/<id>`. This is additive to
+the chat webhook above — set one, the other, both, or neither.
 
 ---
 
@@ -335,9 +351,11 @@ roughly in order:
   Graph security alerts, and a config-driven generic JSON mapper are in (see
   [Other sources](#other-sources)). Still open: CrowdStrike, osquery.
 - **Outbound actions** — sift can POST a short summary to a Slack/Mattermost/
-  Discord webhook on ESCALATE (see [Outbound notifications](#outbound-notifications-optional)).
-  Still open: push verdicts back to TheHive / a ticketing system; keep the
-  human in the loop for anything destructive.
+  Discord webhook, and/or create a TheHive alert with the full receipt, on
+  ESCALATE (see [Outbound notifications](#outbound-notifications-optional)).
+  These are notifications, not automation — sift never acts on an asset
+  itself, keeping a human in the loop for anything destructive. Still open:
+  other ticketing systems (Jira, ServiceNow).
 - **Smarter noisy-rule modelling** — the penalty now scales with a Wilson
   confidence interval on the track record (see [the learning loop](#the-learning-loop)).
   Still open: per-asset rule tuning, drift alerts when a quiet rule turns noisy.

@@ -210,3 +210,14 @@ VIRUSTOTAL_KEY = os.environ.get("VIRUSTOTAL_KEY", "")
 # unset and sift stays silent — nothing else changes.
 # ---------------------------------------------------------------------------
 ESCALATE_WEBHOOK_URL = os.environ.get("ESCALATE_WEBHOOK_URL", "")
+
+# ---------------------------------------------------------------------------
+# TheHive (optional).
+# Set both and sift will create a TheHive alert — with the full receipt in
+# the description — for every ESCALATE verdict, alongside (or instead of)
+# the chat webhook above. THEHIVE_URL is your instance's base URL (e.g.
+# https://thehive.example.org); THEHIVE_API_KEY needs permission to create
+# alerts. Leave either unset and sift skips this — nothing else changes.
+# ---------------------------------------------------------------------------
+THEHIVE_URL = os.environ.get("THEHIVE_URL", "").rstrip("/")
+THEHIVE_API_KEY = os.environ.get("THEHIVE_API_KEY", "")
