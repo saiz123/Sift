@@ -52,6 +52,13 @@ def _first(*values):
     return None
 
 
+def _first_of(items):
+    """The first dict in a list field (e.g. hostStates[0]), or {} if empty/missing."""
+    if isinstance(items, list) and items and isinstance(items[0], dict):
+        return items[0]
+    return {}
+
+
 def _clamp_level(value):
     """Round to the nearest int and clamp onto sift's 0-15 severity scale."""
     try:
@@ -275,6 +282,61 @@ def normalize_guardduty(raw):
         "target": _first(instance_id, raw.get("accountId")),
         "file_hash": None,
         "timestamp": _first(raw.get("updatedAt"), raw.get("createdAt")),
+        "raw": raw,
+    }
+
+
+# Microsoft Graph's free-text alert severity (informational/low/medium/high)
+# spread across sift's 0-15 scale. The legacy alerts API has no "critical"
+# tier, so "high" lands below the very top of the range.
+_M365_SEVERITY_LEVELS = {"informational": 2, "low": 5, "medium": 9, "high": 13}
+
+
+def normalize_m365(raw):
+    """
+    Turn a Microsoft Graph Security API alert (the `/security/alerts` shape —
+    e.g. forwarded from Defender for Endpoint, Defender for Identity, Defender
+    for Cloud Apps, or Sentinel) into sift's flat shape.
+    """
+    if not isinstance(raw, dict):
+        return None
+    if "vendorInformation" not in raw and "azureTenantId" not in raw:
+        return None
+
+    label = str(raw.get("severity") or "").lower()
+    if label in _M365_SEVERITY_LEVELS:
+        level = _M365_SEVERITY_LEVELS[label]
+        severity_detail = f"Microsoft Graph severity '{label}' -> level {level} of 15"
+    else:
+        level = 0
+        severity_detail = "Microsoft Graph alert carried no recognised severity"
+
+    host = _first_of(raw.get("hostStates"))
+    user = _first_of(raw.get("userStates"))
+    network = _first_of(raw.get("networkConnections"))
+    file_state = _first_of(raw.get("fileStates"))
+    file_hash = file_state.get("fileHash") if isinstance(file_state.get("fileHash"), dict) else {}
+
+    src_ip = _first(
+        network.get("sourceAddress"),
+        user.get("logonIp"),
+        host.get("publicIpAddress"),
+        host.get("privateIpAddress"),
+    )
+
+    category = raw.get("category")
+
+    return {
+        "source": "m365",
+        "rule_id": str(category) if category is not None else None,
+        "rule_desc": _first(raw.get("title"), raw.get("description")),
+        "rule_level": level,
+        "severity_detail": severity_detail,
+        "src_ip": src_ip,
+        "src_user": _first(user.get("userPrincipalName"), user.get("accountName")),
+        "target": _first(host.get("fqdn"), host.get("netBiosName")),
+        "file_hash": file_hash.get("hashValue"),
+        "timestamp": _first(raw.get("eventDateTime"), raw.get("createdDateTime")),
         "raw": raw,
     }
 

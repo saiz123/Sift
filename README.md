@@ -195,6 +195,7 @@ just like a Wazuh alert.
 | `POST /webhook/suricata` | One line of Suricata's `eve.json` (an `"event_type": "alert"` record). Other event types (flow, dns, http, ...) are accepted but skipped — point sift at the whole `eve.json` without flooding the queue. |
 | `POST /webhook/elastic` | An Elastic Common Schema (ECS) document — a Kibana detection alert via a webhook connector, or any ECS-shaped JSON from Beats/Elastic Agent/Logstash. |
 | `POST /webhook/guardduty` | An AWS GuardDuty finding (e.g. forwarded from EventBridge via a small Lambda, or replayed from the console's "View finding JSON"). |
+| `POST /webhook/m365` | A Microsoft Graph Security API alert (the `/security/alerts` shape) — e.g. forwarded from Defender for Endpoint, Defender for Identity, Defender for Cloud Apps, or Sentinel. |
 | `POST /webhook/generic` | Any JSON at all — fields are pulled out using the dotted paths in `config.GENERIC_FIELD_MAP`, no Python required. |
 
 Each source's severity is normalised onto sift's 0-15 scale (the same scale
@@ -210,11 +211,12 @@ Try any of them locally:
 python3 send_sample.py sample_alerts/suricata_alert.json
 python3 send_sample.py sample_alerts/elastic_alert.json
 python3 send_sample.py sample_alerts/guardduty_finding.json
+python3 send_sample.py sample_alerts/m365_alert.json
 python3 send_sample.py sample_alerts/generic_alert.json
 ```
 
 `send_sample.py` guesses the right endpoint from the JSON's shape, so all
-five sample files (including the three Wazuh ones) work with the same
+six sample files (including the three Wazuh ones) work with the same
 command.
 
 None of these match your tool? `POST` any JSON to `/webhook/generic` and map
@@ -289,7 +291,7 @@ Edit, save, restart.
 ```
 sift.py          HTTP server + routing (entry point)
 config.py        all the dials you tune
-normalize.py     raw alert JSON (Wazuh, Suricata, Elastic, GuardDuty, generic) -> flat internal alert
+normalize.py     raw alert JSON (Wazuh, Suricata, Elastic, GuardDuty, M365/Graph, generic) -> flat internal alert
 checks.py        the signals — each returns one receipt line or nothing
 scorer.py        gather context, run checks, sum to a score + verdict
 enrich.py        optional AbuseIPDB / VirusTotal lookups
@@ -324,9 +326,9 @@ roughly in order:
 - **More signals** — identity context (a user alerting from a source IP sift
   has never seen them use before) and allowlists for users/hashes are in.
   Still open: geo/ASN velocity, threat-intel beyond two feeds.
-- **More sources** — Suricata, Elastic/ECS, AWS GuardDuty, and a config-driven
-  generic JSON mapper are in (see [Other sources](#other-sources)). Still
-  open: M365 / Microsoft Graph security alerts, CrowdStrike, osquery.
+- **More sources** — Suricata, Elastic/ECS, AWS GuardDuty, M365/Microsoft
+  Graph security alerts, and a config-driven generic JSON mapper are in (see
+  [Other sources](#other-sources)). Still open: CrowdStrike, osquery.
 - **Outbound actions** — sift can POST a short summary to a Slack/Mattermost/
   Discord webhook on ESCALATE (see [Outbound notifications](#outbound-notifications-optional)).
   Still open: push verdicts back to TheHive / a ticketing system; keep the

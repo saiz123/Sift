@@ -6,7 +6,7 @@ Send one alert file to a running sift and print the verdict it returns.
 
 The right /webhook/<source> endpoint is guessed from the shape of the JSON,
 so this works for any of the sample_alerts/ files (Wazuh, Suricata, Elastic,
-GuardDuty, generic) without extra flags.
+GuardDuty, Microsoft Graph, generic) without extra flags.
 
 Handy for trying things out and for wiring into your own test scripts.
 """
@@ -21,6 +21,8 @@ def _guess_endpoint(raw):
         return "/webhook/wazuh"
     if "schemaVersion" in raw and "type" in raw and "severity" in raw:
         return "/webhook/guardduty"
+    if "vendorInformation" in raw or "azureTenantId" in raw:
+        return "/webhook/m365"
     if raw.get("event_type") == "alert" and "alert" in raw:
         return "/webhook/suricata"
     if "rule" in raw and "agent" in raw:

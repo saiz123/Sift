@@ -16,6 +16,7 @@ Routes
   POST /webhook/suricata     ingest a Suricata EVE JSON "alert" event
   POST /webhook/elastic      ingest an Elastic/ECS detection alert
   POST /webhook/guardduty    ingest an AWS GuardDuty finding
+  POST /webhook/m365         ingest a Microsoft Graph Security API alert
   POST /webhook/generic      ingest any JSON, mapped via config.GENERIC_FIELD_MAP
                              (each /webhook/* route returns the verdict as JSON)
   GET  /healthz              liveness check
@@ -37,6 +38,7 @@ from normalize import (
     normalize_elastic,
     normalize_generic,
     normalize_guardduty,
+    normalize_m365,
     normalize_suricata,
     normalize_wazuh,
 )
@@ -48,6 +50,7 @@ WEBHOOK_NORMALIZERS = {
     "/webhook/suricata": normalize_suricata,
     "/webhook/elastic": normalize_elastic,
     "/webhook/guardduty": normalize_guardduty,
+    "/webhook/m365": normalize_m365,
     "/webhook/generic": normalize_generic,
 }
 

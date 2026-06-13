@@ -1,0 +1,42 @@
+{
+  "id": "da637000000000000_-1234567890",
+  "azureTenantId": "72f988bf-0000-0000-0000-000000000000",
+  "category": "CredentialAccess",
+  "title": "Suspicious credential dumping tool execution detected",
+  "description": "lsass.exe was accessed by a process attempting to read credential material, consistent with Mimikatz-style credential dumping.",
+  "severity": "high",
+  "status": "newAlert",
+  "createdDateTime": "2026-06-12T03:00:00Z",
+  "eventDateTime": "2026-06-12T03:00:00Z",
+  "vendorInformation": {
+    "provider": "Microsoft Defender for Endpoint",
+    "vendor": "Microsoft"
+  },
+  "hostStates": [
+    {
+      "fqdn": "dc01.corp.example.com",
+      "netBiosName": "DC01",
+      "os": "Windows Server 2022",
+      "privateIpAddress": "10.0.0.4"
+    }
+  ],
+  "userStates": [
+    {
+      "userPrincipalName": "jsmith@corp.example.com",
+      "accountName": "jsmith",
+      "domainName": "corp",
+      "logonIp": "45.146.165.37"
+    }
+  ],
+  "networkConnections": [],
+  "fileStates": [
+    {
+      "name": "mimikatz.exe",
+      "path": "C:\\Users\\Public\\mimikatz.exe",
+      "fileHash": {
+        "hashType": "sha256",
+        "hashValue": "44d88612fea8a8f36de82e1278abb02fd47bbb8a316b8a8f36de82e1278abb0"
+      }
+    }
+  ]
+}
