@@ -33,15 +33,47 @@ sift is a small, opinionated answer to that gap:
 
 ---
 
-## Quickstart
+## For normal people
 
-Requires only Python 3.10+.
+Skip this if you're already reaching for `config.py`. This bit is the
+elevator-pitch version for anyone who clicked a link and wants to know what
+this thing actually does.
+
+**The problem:** every security tool — antivirus, firewalls, cloud logs —
+fires off alerts. Most of them are nothing. A few of them are everything. The
+hard part isn't *detecting* trouble, it's figuring out which of today's 500
+alerts deserve five minutes of a human's attention.
+
+**What sift does:** it reads every alert as it arrives and writes a little
+*receipt* — a few lines explaining, in plain English, why the alert looks
+scary or boring. Something like:
+
+```
++48  SIEM severity            — the security tool rated this a 12 out of 15
++30  Critical asset           — this happened on your domain controller
++15  Outside business hours   — nobody should be doing this at 3am
+```
+
+Add those up, and sift sorts the alert into one of three piles: **ignore it**
+(but keep the receipt, just in case), **someone should glance at this**, or
+**look at this right now**. Whenever a human corrects it — "no, that one was
+nothing" — sift remembers, and that kind of alert gets quieter on its own
+next time.
+
+**What it costs:** nothing, on an ongoing basis. No subscription, no
+per-alert API fee, no "AI SOC analyst" bill that scales with how paranoid you
+are. It's a small Python program and a database file — run it on a laptop, a
+spare server, or an air-gapped box.
+
+### Try it
+
+You need Python 3.10 or newer and nothing else.
 
 ```bash
 python3 sift.py
 ```
 
-Then, in another terminal, push a sample alert through it:
+Then, in another terminal, feed it a sample alert:
 
 ```bash
 python3 send_sample.py sample_alerts/real_attack.json
@@ -55,12 +87,18 @@ python3 send_sample.py sample_alerts/real_attack.json
       +15  Outside business hours  —  Activity at 03:00, outside 08:00-18:00
 ```
 
-Open **http://127.0.0.1:8000/** to see the triage queue and click any alert
-for its full receipt.
+Open **http://127.0.0.1:8000/** to see it land in the triage queue, and click
+it to see the full receipt.
 
 ---
 
-## How it works
+## For nerds
+
+The rest of this document is the technical reference — architecture, the
+scoring model, wiring sift up to real sources, and every dial in
+`config.py`.
+
+### How it works
 
 ```
    SIEM alert ──POST──▶  /webhook/<source>
@@ -82,7 +120,7 @@ reason. The points are summed into a score, and the score picks the verdict.
 That's the whole model — deliberately simple, because the value is in the
 transparency, not in cleverness you can't audit.
 
-### The signals
+#### The signals
 
 | Signal | Effect | Why |
 | --- | --- | --- |
@@ -100,7 +138,7 @@ transparency, not in cleverness you can't audit.
 
 Every number lives in [`config.py`](config.py). Tune them to your environment.
 
-### The learning loop
+#### The learning loop
 
 This is what keeps sift from going stale. On the alert page, an analyst marks
 each handled alert **Confirm real threat** or **Mark false alarm**. sift keeps
@@ -124,7 +162,7 @@ more decisions come in. No arbitrary "wait for N observations" cliff.
 
 ---
 
-## Wiring it to Wazuh
+### Wiring it to Wazuh
 
 Add an integration block to the Wazuh manager's `ossec.conf` so it forwards
 alerts to sift, then restart the manager:
@@ -145,7 +183,7 @@ Wazuh integration docs for the exact shape on your version.)
 
 ---
 
-## Other sources
+### Other sources
 
 sift normalises a few other formats out of the box, each on its own webhook
 route. Every route returns the same `{id, score, verdict, receipt}` JSON, and
@@ -186,7 +224,7 @@ Nothing downstream cares which source an alert came from.
 
 ---
 
-## Enrichment (optional)
+### Enrichment (optional)
 
 Set either key as an environment variable (or in a local `.env` file) to turn
 on reputation signals. Leave them unset and sift just skips those signals —
@@ -202,7 +240,7 @@ twice.
 
 ---
 
-## Outbound notifications (optional)
+### Outbound notifications (optional)
 
 Set `ESCALATE_WEBHOOK_URL` (env var or `.env`) to a Slack, Mattermost, or
 Discord incoming-webhook URL and sift will POST a short summary there every
@@ -225,7 +263,7 @@ and sift stays exactly as before.
 
 ---
 
-## Configuration
+### Configuration
 
 Everything tunable is in [`config.py`](config.py), commented:
 
@@ -246,7 +284,7 @@ Edit, save, restart.
 
 ---
 
-## Project layout
+### Project layout
 
 ```
 sift.py          HTTP server + routing (entry point)
@@ -264,7 +302,7 @@ sample_alerts/   one alert per source — the three Wazuh ones cover JUNK/REVIEW
 
 ---
 
-## Roadmap
+### Roadmap
 
 v1 deliberately does one thing well: explainable, learning triage on top of a
 single SIEM. Every roadmap item is held to the same bar as v1: **no AI model,
@@ -301,7 +339,7 @@ new SIEM is an afternoon, not a project.
 
 ---
 
-## Honest limitations
+### Honest limitations
 
 - This is **triage, not detection**. sift prioritises the alerts your SIEM
   already produces; it doesn't find new ones.
