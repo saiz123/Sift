@@ -369,21 +369,52 @@ roughly in order:
 - **More signals** — identity context (a user alerting from a source IP sift
   has never seen them use before), source-IP velocity (impossible travel,
   derived from sift's own history — no GeoIP database needed), and allowlists
-  for users/hashes are in. Still open: threat-intel beyond two feeds.
+  for users/hashes are in. Still open: threat-intel beyond two feeds
+  ([milestone v1.3](#milestones)).
 - **More sources** — Suricata, Elastic/ECS, AWS GuardDuty, M365/Microsoft
   Graph security alerts, and a config-driven generic JSON mapper are in (see
-  [Other sources](#other-sources)). Still open: CrowdStrike, osquery.
+  [Other sources](#other-sources)). Still open: CrowdStrike, osquery
+  ([milestone v1.4](#milestones)).
 - **Outbound actions** — sift can POST a short summary to a Slack/Mattermost/
   Discord webhook, and/or create a TheHive alert with the full receipt, on
   ESCALATE (see [Outbound notifications](#outbound-notifications-optional)).
   These are notifications, not automation — sift never acts on an asset
   itself, keeping a human in the loop for anything destructive. Still open:
-  other ticketing systems (Jira, ServiceNow).
+  other ticketing systems (Jira, ServiceNow) ([milestone v1.5](#milestones)).
 - **Smarter noisy-rule modelling** — the penalty scales with a Wilson
   confidence interval on the track record, scoped per-asset once a (rule,
   target) pair has its own decisions, and a rule firing well above its own
   historical average is flagged as a "Rule activity spike" (see
   [the learning loop](#the-learning-loop)).
+
+### Milestones
+
+The next five big updates, roughly in priority order. Each is held to the
+same bar as v1/v1.1: **no AI model, no third-party API, no ongoing cost**.
+Self-hosted infrastructure you already run (TheHive, Jira, ServiceNow) is
+fair game, the same way the Slack/Discord webhook is — sift talks to it, but
+never depends on it being there.
+
+- **v1.2 — Alert correlation / case view.** Group alerts that share an actor
+  (user or source IP) or asset and fire within a short window into a single
+  *case*, so an analyst triages one incident instead of N near-duplicate
+  alerts from the same root cause. Each alert keeps its own receipt; the case
+  view rolls them up and takes the highest verdict among its members.
+- **v1.3 — More threat-intel feeds.** Beyond AbuseIPDB/VirusTotal: free,
+  self-hostable feeds such as abuse.ch (URLhaus, Feodo Tracker, SSLBL) and the
+  Tor exit-node list, plus a local CSV/text blocklist import for fully
+  air-gapped use — each wired into `enrich.py` the same way, with the same
+  cache.
+- **v1.4 — CrowdStrike & osquery sources.** Two more normalizers
+  (`normalize_crowdstrike`, `normalize_osquery`) following the existing
+  pattern, closing out the "More sources" still-open list.
+- **v1.5 — Jira & ServiceNow outbound actions.** Extend the TheHive pattern in
+  `notify.py` to create a Jira issue and/or a ServiceNow incident on ESCALATE,
+  with the receipt as the description — still notifications, not automation.
+- **v1.6 — Authentication, roles & audit trail.** A minimal stdlib-only login
+  (hashlib/secrets-based sessions, no external identity provider) so every
+  verdict records *who* decided it — the missing piece for multi-analyst
+  teams sharing one sift instance.
 
 Contributions welcome — the codebase is small on purpose so a new signal or a
 new SIEM is an afternoon, not a project.
