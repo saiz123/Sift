@@ -173,6 +173,17 @@ DRIFT_SPIKE_MULTIPLIER = 3
 DRIFT_MIN_LIFETIME_ALERTS = 5
 
 # ---------------------------------------------------------------------------
+# Case correlation.
+#
+# Alerts that share a source user, source IP, or target within the last
+# CASE_WINDOW_HOURS are grouped into a "case" on the /cases page once at
+# least CASE_MIN_ALERTS of them share that value — a burst of related
+# activity worth triaging together rather than one alert at a time.
+# ---------------------------------------------------------------------------
+CASE_WINDOW_HOURS = 4
+CASE_MIN_ALERTS = 2
+
+# ---------------------------------------------------------------------------
 # Generic source (POST /webhook/generic).
 #
 # Map sift's flat alert fields onto dotted paths into *your* tool's JSON, so

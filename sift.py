@@ -8,6 +8,8 @@ Or point a SIEM:  POST your alerts to  http://<host>:<port>/webhook/<source>
 Routes
   GET  /                     triage queue (optional ?verdict=&q=&snoozed=1&age=<hours>)
   GET  /alert/<id>           the alert and its receipt
+  GET  /cases                alerts grouped by shared user/IP/target (see config.CASE_*)
+  GET  /case/<dim>/<value>   the alerts in one case (<dim> is user, ip, or target)
   POST /alert/<id>/feedback  record an analyst verdict (teaches the noisy-rule signal)
   POST /alert/<id>/snooze    hide this alert from the queue for N hours
   POST /alert/<id>/unsnooze  bring a snoozed alert back into the queue now
@@ -149,6 +151,19 @@ class Handler(BaseHTTPRequestHandler):
                 alert, filter_qs=filter_qs, prev_id=prev_id, next_id=next_id
             ))
 
+        if path == "/cases":
+            cases = db.list_cases(config.CASE_WINDOW_HOURS, config.CASE_MIN_ALERTS)
+            return self._send(200, views.render_cases(cases))
+
+        m = re.fullmatch(r"/case/(user|ip|target)/([^/]+)", path)
+        if m:
+            dimension = m.group(1)
+            value = urllib.parse.unquote(m.group(2))
+            alerts = db.list_case_alerts(dimension, value, config.CASE_WINDOW_HOURS)
+            if not alerts:
+                return self._send(404, views.page("Not found", "<p>No such case.</p>"))
+            return self._send(200, views.render_case(dimension, value, alerts))
+
         return self._send(404, views.page("Not found", "<p>Not found.</p>"))
 
     def do_POST(self):
@@ -246,6 +261,9 @@ class Handler(BaseHTTPRequestHandler):
         for raw_id in form.get("ids", []):
             if raw_id.isdigit():
                 db.record_feedback(int(raw_id), verdict)
+        case_path = form.get("case", [""])[0]
+        if case_path:
+            return self._redirect(f"/case/{case_path}")
         # Redirect back to whatever queue view this came from.
         keep = [(k, form[k][0]) for k in ("verdict", "q", "snoozed", "age") if form.get(k, [""])[0]]
         location = "/?" + urllib.parse.urlencode(keep) if keep else "/"

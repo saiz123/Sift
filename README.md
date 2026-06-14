@@ -175,6 +175,23 @@ fires `DRIFT_SPIKE_MULTIPLIER`x or more its own historical average within
 change worth a second look, whether that's the rule turning noisy or a real
 incident causing a burst.
 
+#### Cases
+
+Related alerts pile up fast — the same compromised account tripping three
+different rules, or one host generating a dozen near-identical detections.
+[`/cases`](#how-it-works) groups alerts that share a source user, source IP,
+or target within the last `CASE_WINDOW_HOURS`, once at least `CASE_MIN_ALERTS`
+of them share that value, so an analyst triages one incident instead of N
+near-duplicates.
+
+A case rolls up to the most severe verdict among its members — one ESCALATE
+in the group makes the whole case ESCALATE — and its page reuses the same
+checkbox-driven bulk feedback as the dashboard, landing you back on the case
+once you've decided. A single alert can appear in more than one case (e.g.
+the same source IP *and* the same target), and snoozed or already-decided
+alerts still count: a case is the recent history of related activity, not
+just the open queue.
+
 ---
 
 ### Wiring it to Wazuh
@@ -316,6 +333,9 @@ Everything tunable is in [`config.py`](config.py), commented:
   like impossible travel
 - `DRIFT_WINDOW_HOURS` / `DRIFT_SPIKE_MULTIPLIER` / `DRIFT_MIN_LIFETIME_ALERTS`
   — how big a jump in a rule's firing rate counts as a "Rule activity spike"
+- `CASE_WINDOW_HOURS` / `CASE_MIN_ALERTS` — how recent and how many alerts
+  need to share a source user, source IP, or target before they're grouped
+  into a case on [`/cases`](#cases)
 - `GENERIC_FIELD_MAP` — dotted-path field mapping for `POST /webhook/generic`,
   for wiring up a tool that doesn't have a dedicated normaliser
   (see [Other sources](#other-sources))
@@ -335,7 +355,7 @@ scorer.py        gather context, run checks, sum to a score + verdict
 enrich.py        optional AbuseIPDB / VirusTotal lookups
 notify.py        optional chat webhook on ESCALATE
 db.py            SQLite: alerts, per-rule track record, enrichment cache
-views.py         the dashboard and the receipt page
+views.py         the dashboard, case views, and the receipt page
 send_sample.py   push an alert file at a running sift (guesses the endpoint)
 sample_alerts/   one alert per source — the three Wazuh ones cover JUNK/REVIEW/ESCALATE
 ```
@@ -389,17 +409,21 @@ roughly in order:
 
 ### Milestones
 
-The next five big updates, roughly in priority order. Each is held to the
-same bar as v1/v1.1: **no AI model, no third-party API, no ongoing cost**.
-Self-hosted infrastructure you already run (TheHive, Jira, ServiceNow) is
-fair game, the same way the Slack/Discord webhook is — sift talks to it, but
-never depends on it being there.
+> **v1.2** has landed: alert correlation / [case view](#cases) is live —
+> `/cases`, `/case/<dim>/<value>`, and the `CASE_WINDOW_HOURS` /
+> `CASE_MIN_ALERTS` dials. v1.3-v1.6 below are next, roughly in priority order.
 
-- **v1.2 — Alert correlation / case view.** Group alerts that share an actor
-  (user or source IP) or asset and fire within a short window into a single
-  *case*, so an analyst triages one incident instead of N near-duplicate
-  alerts from the same root cause. Each alert keeps its own receipt; the case
-  view rolls them up and takes the highest verdict among its members.
+Each milestone is held to the same bar as v1/v1.1: **no AI model, no
+third-party API, no ongoing cost**. Self-hosted infrastructure you already
+run (TheHive, Jira, ServiceNow) is fair game, the same way the Slack/Discord
+webhook is — sift talks to it, but never depends on it being there.
+
+- ~~**v1.2 — Alert correlation / case view.**~~ Shipped. Alerts that share an
+  actor (user or source IP) or asset within `CASE_WINDOW_HOURS` are grouped
+  into a *case* once `CASE_MIN_ALERTS` of them share that value, so an analyst
+  triages one incident instead of N near-duplicate alerts from the same root
+  cause. Each alert keeps its own receipt; the case rolls them up under the
+  highest verdict among its members. See [Cases](#cases).
 - **v1.3 — More threat-intel feeds.** Beyond AbuseIPDB/VirusTotal: free,
   self-hostable feeds such as abuse.ch (URLhaus, Feodo Tracker, SSLBL) and the
   Tor exit-node list, plus a local CSV/text blocklist import for fully

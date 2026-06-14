@@ -239,10 +239,11 @@ def page(title, body):
     )
 
 
-def _masthead():
+def _masthead(nav_links=""):
+    extra = f'<span class="nav-links">{nav_links}</span>' if nav_links else ""
     return (
         '<div class="masthead"><span class="wordmark">si<b>ft</b>.</span>'
-        '<span class="tagline">transparent alert triage</span></div>'
+        '<span class="tagline">transparent alert triage</span>' + extra + "</div>"
     )
 
 
@@ -252,6 +253,25 @@ AGE_OPTIONS = [
     ("24", "Older than 24h"),
     ("168", "Older than 7d"),
 ]
+
+
+def _alert_row_html(a, href):
+    vc = VERDICT_CLASS.get(a["verdict"], "")
+    desc = _esc(a["rule_desc"] or "")
+    return (
+        f'<tr class="{vc}" data-href="{href}" onclick="location.href=\'{href}\'" style="cursor:pointer">'
+        f'<td class="check" onclick="event.stopPropagation()">'
+        f'<input type="checkbox" name="ids" value="{a["id"]}"></td>'
+        f'<td class="time">{_fmt_time(a["received_at"])}</td>'
+        f'<td class="mono">{_esc(a.get("source") or "—")}</td>'
+        f'<td><span class="mono">{_esc(a["rule_id"] or "—")}</span>'
+        f'<div class="rule-desc">{desc}</div></td>'
+        f'<td class="mono">{_esc(a["target"] or "—")}</td>'
+        f'<td class="mono">{_esc(a["src_ip"] or "—")}</td>'
+        f'<td class="num">{a["score"]}</td>'
+        f'<td><span class="pill {vc}">{_esc(a["verdict"])}</span></td>'
+        f"</tr>"
+    )
 
 
 def render_dashboard(alerts, counts, active_filter, q=None, snoozed=False, age=None, snoozed_n=0):
@@ -302,23 +322,8 @@ def render_dashboard(alerts, counts, active_filter, q=None, snoozed=False, age=N
     if alerts:
         rows = []
         for a in alerts:
-            vc = VERDICT_CLASS.get(a["verdict"], "")
-            desc = _esc(a["rule_desc"] or "")
             href = f"/alert/{a['id']}{detail_suffix}"
-            rows.append(
-                f'<tr class="{vc}" data-href="{href}" onclick="location.href=\'{href}\'" style="cursor:pointer">'
-                f'<td class="check" onclick="event.stopPropagation()">'
-                f'<input type="checkbox" name="ids" value="{a["id"]}"></td>'
-                f'<td class="time">{_fmt_time(a["received_at"])}</td>'
-                f'<td class="mono">{_esc(a.get("source") or "—")}</td>'
-                f'<td><span class="mono">{_esc(a["rule_id"] or "—")}</span>'
-                f'<div class="rule-desc">{desc}</div></td>'
-                f'<td class="mono">{_esc(a["target"] or "—")}</td>'
-                f'<td class="mono">{_esc(a["src_ip"] or "—")}</td>'
-                f'<td class="num">{a["score"]}</td>'
-                f'<td><span class="pill {vc}">{_esc(a["verdict"])}</span></td>'
-                f"</tr>"
-            )
+            rows.append(_alert_row_html(a, href))
         bulk_hidden = ""
         if active_filter:
             bulk_hidden += f'<input type="hidden" name="verdict" value="{_esc(active_filter)}">'
@@ -389,8 +394,91 @@ def render_dashboard(alerts, counts, active_filter, q=None, snoozed=False, age=N
 
     toolbar = '<div class="toolbar"><div class="chips">' + "".join(chips) + "</div>" + search + "</div>"
     hint = '<div class="hint">j/k or &uarr;/&darr; select &middot; enter open &middot; / search</div>' if alerts else ""
-    body = _masthead() + toolbar + hint + table
+    body = _masthead('<a class="back" href="/cases">Cases</a>') + toolbar + hint + table
     return page("sift — triage queue", body)
+
+
+_VERDICT_RANK = {"ESCALATE": 0, "REVIEW": 1, "JUNK": 2}
+DIMENSION_LABEL = {"user": "source user", "ip": "source IP", "target": "target"}
+
+
+def render_cases(cases):
+    if cases:
+        rows = []
+        for c in cases:
+            vc = VERDICT_CLASS.get(c["rollup_verdict"], "")
+            href = f"/case/{c['dimension']}/{urllib.parse.quote(str(c['value']), safe='')}"
+            rows.append(
+                f'<tr class="{vc}" data-href="{href}" onclick="location.href=\'{href}\'" style="cursor:pointer">'
+                f'<td class="mono">{_esc(DIMENSION_LABEL.get(c["dimension"], c["dimension"]))}</td>'
+                f'<td class="mono">{_esc(c["value"])}</td>'
+                f'<td class="num">{c["count"]}</td>'
+                f'<td class="time">{_fmt_time(c["latest"])}</td>'
+                f'<td><span class="pill {vc}">{_esc(c["rollup_verdict"])}</span></td>'
+                f'<td class="mono">{c["escalate_n"]}/{c["review_n"]}/{c["junk_n"]}</td>'
+                f"</tr>"
+            )
+        table = (
+            '<div class="table-wrap"><table><thead><tr>'
+            "<th>Shared on</th><th>Value</th><th style=\"text-align:right\">Alerts</th>"
+            "<th>Latest</th><th>Verdict</th><th>E / R / J</th>"
+            "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>"
+        )
+    else:
+        table = (
+            '<div class="table-wrap"><div class="empty">No cases right now.<br><br>'
+            f"A case appears once <code>{config.CASE_MIN_ALERTS}+</code> alerts share a "
+            "source user, source IP, or target within the last "
+            f"<code>{config.CASE_WINDOW_HOURS}h</code>."
+            "</div></div>"
+        )
+    body = (
+        _masthead('<a class="back" href="/">&larr; queue</a>')
+        + '<p class="panel-label">Cases &mdash; related activity worth triaging together</p>'
+        + table
+    )
+    return page("sift — cases", body)
+
+
+def render_case(dimension, value, alerts):
+    rollup = min((a["verdict"] for a in alerts), key=lambda v: _VERDICT_RANK.get(v, 2)) if alerts else "JUNK"
+    vc = VERDICT_CLASS.get(rollup, "")
+    label = DIMENSION_LABEL.get(dimension, dimension)
+    case_path = f"{dimension}/{urllib.parse.quote(str(value), safe='')}"
+
+    rows = [_alert_row_html(a, f"/alert/{a['id']}") for a in alerts]
+    table = (
+        '<form class="bulk-form" method="post" action="/bulk-feedback">'
+        f'<input type="hidden" name="case" value="{_esc(case_path)}">'
+        '<div class="table-wrap"><table><thead><tr>'
+        '<th class="check"><input type="checkbox" id="select-all" title="select all"></th>'
+        "<th>Time</th><th>Source</th><th>Rule</th><th>Target</th><th>Source IP</th>"
+        "<th style=\"text-align:right\">Score</th><th>Verdict</th>"
+        "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div>"
+        '<div class="bulk-actions"><span class="bulk-label">With selected:</span>'
+        '<button class="btn tp" type="submit" name="analyst_verdict" value="true_positive">Real threat</button>'
+        '<button class="btn fp" type="submit" name="analyst_verdict" value="false_positive">False alarm</button>'
+        "</div>"
+        "<script>"
+        "document.getElementById('select-all').addEventListener('change',function(e){"
+        "document.querySelectorAll('input[name=\"ids\"]').forEach(function(c){c.checked=e.target.checked;});"
+        "});"
+        "</script>"
+        "</form>"
+    )
+
+    header = (
+        '<p class="panel-label">Case</p>'
+        f'<div style="margin-bottom:18px;font-size:14px">'
+        f'<span class="mono">{_esc(value)}</span> '
+        f'<span class="pill {vc}">{_esc(rollup)}</span>'
+        f'<div class="hint" style="margin:6px 0 0">{len(alerts)} alert(s) sharing this {_esc(label)} '
+        f'in the last {config.CASE_WINDOW_HOURS}h</div>'
+        "</div>"
+    )
+
+    body = _masthead('<a class="back" href="/cases">&larr; cases</a>') + header + table
+    return page(f"sift — case: {value}", body)
 
 
 def _receipt_html(alert):
@@ -508,6 +596,7 @@ def render_detail(alert, filter_qs="", prev_id=None, next_id=None):
         nav.append(f'<a class="back" id="prev-link" href="/alert/{prev_id}{suffix}">&uarr; prev</a>')
     if next_id:
         nav.append(f'<a class="back" id="next-link" href="/alert/{next_id}{suffix}">&darr; next</a>')
+    nav.append('<a class="back" href="/cases">Cases</a>')
     masthead = (
         '<div class="masthead"><span class="wordmark">si<b>ft</b>.</span>'
         '<span class="nav-links">' + " ".join(nav) + "</span></div>"

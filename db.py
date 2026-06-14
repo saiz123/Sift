@@ -369,6 +369,77 @@ def rule_activity_stats(rule_id, window_hours):
     return {"total": row["total"], "first_seen": row["first_seen"], "recent": row["recent"]}
 
 
+# --- case correlation ------------------------------------------------------
+
+_VERDICT_RANK = {"ESCALATE": 0, "REVIEW": 1, "JUNK": 2}
+_RANK_VERDICT = {v: k for k, v in _VERDICT_RANK.items()}
+_VERDICT_RANK_SQL = "CASE verdict WHEN 'ESCALATE' THEN 0 WHEN 'REVIEW' THEN 1 ELSE 2 END"
+
+_CASE_DIMENSIONS = (("user", "src_user"), ("ip", "src_ip"), ("target", "target"))
+
+
+def list_cases(window_hours, min_alerts):
+    """
+    Group alerts that share a src_user, src_ip, or target within the last
+    window_hours into "cases" — bursts of related activity worth triaging
+    together. Returns a list of dicts: {dimension, value, count, latest,
+    rollup_verdict, escalate_n, review_n, junk_n}, most severe and most
+    recent first.
+    """
+    cutoff = (dt.datetime.now() - dt.timedelta(hours=window_hours)).isoformat(timespec="seconds")
+    cases = []
+    with connect() as conn:
+        for dimension, column in _CASE_DIMENSIONS:
+            rows = conn.execute(
+                f"""
+                SELECT {column} AS value, COUNT(*) AS count, MAX(received_at) AS latest,
+                       MIN({_VERDICT_RANK_SQL}) AS rank,
+                       SUM(verdict = 'ESCALATE') AS escalate_n,
+                       SUM(verdict = 'REVIEW') AS review_n,
+                       SUM(verdict = 'JUNK') AS junk_n
+                FROM alerts
+                WHERE {column} IS NOT NULL AND {column} != '' AND received_at >= ?
+                GROUP BY {column}
+                HAVING COUNT(*) >= ?
+                """,
+                (cutoff, min_alerts),
+            ).fetchall()
+            for row in rows:
+                cases.append({
+                    "dimension": dimension,
+                    "value": row["value"],
+                    "count": row["count"],
+                    "latest": row["latest"],
+                    "rollup_verdict": _RANK_VERDICT[row["rank"]],
+                    "escalate_n": row["escalate_n"],
+                    "review_n": row["review_n"],
+                    "junk_n": row["junk_n"],
+                })
+    cases.sort(key=lambda c: c["latest"], reverse=True)
+    cases.sort(key=lambda c: _VERDICT_RANK[c["rollup_verdict"]])
+    return cases
+
+
+def list_case_alerts(dimension, value, window_hours):
+    """
+    All alerts for one (dimension, value) case within window_hours, newest
+    first. dimension is one of "user"/"ip"/"target", mapping to
+    src_user/src_ip/target. Snoozed and already-decided alerts are included
+    intentionally — a case is the recent history of related activity, not
+    just the open queue.
+    """
+    column = {"user": "src_user", "ip": "src_ip", "target": "target"}.get(dimension)
+    if column is None:
+        return []
+    cutoff = (dt.datetime.now() - dt.timedelta(hours=window_hours)).isoformat(timespec="seconds")
+    with connect() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM alerts WHERE {column} = ? AND received_at >= ? ORDER BY id DESC",
+            (value, cutoff),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 # --- enrichment cache -----------------------------------------------------
 
 def cache_get(key):
