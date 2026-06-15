@@ -58,8 +58,8 @@ kbd { font-family:var(--mono); font-size:10px; border:1px solid var(--line);
 .chips { display:flex; gap:10px; flex-wrap:wrap; }
 .chip { display:flex; align-items:baseline; gap:8px; padding:10px 14px;
   background:var(--slate-850); border:1px solid var(--line); border-radius:8px;
-  font-size:13px; color:var(--muted); }
-.chip:hover { border-color:var(--slate-700); }
+  font-size:13px; color:var(--muted); transition:border-color .12s ease, transform .12s ease; }
+.chip:hover { border-color:var(--slate-700); transform:translateY(-1px); }
 .chip .n { font-family:var(--mono); font-size:18px; font-weight:600; color:var(--text); }
 .chip.active { border-color:var(--accent); }
 .chip.escalate .n { color:var(--escalate); }
@@ -83,8 +83,10 @@ kbd { font-family:var(--mono); font-size:10px; border:1px solid var(--line);
 table { width:100%; border-collapse:collapse; font-size:14px; }
 thead th { text-align:left; font-size:11px; text-transform:uppercase;
   letter-spacing:0.7px; color:var(--faint); font-weight:600;
-  padding:12px 14px; background:var(--slate-850); border-bottom:1px solid var(--line); }
-tbody tr { border-bottom:1px solid var(--slate-800); border-left:3px solid transparent; }
+  padding:12px 14px; background:var(--slate-850); border-bottom:1px solid var(--line);
+  position:sticky; top:0; z-index:2; }
+tbody tr { border-bottom:1px solid var(--slate-800); border-left:3px solid transparent;
+  transition:background-color .12s ease; }
 tbody tr:last-child { border-bottom:none; }
 tbody tr:hover { background:var(--slate-850); }
 tbody tr.v-escalate { border-left-color:var(--escalate); }
@@ -94,6 +96,9 @@ tbody tr.focused { background:var(--slate-850); outline:2px solid var(--accent);
 td { padding:12px 14px; vertical-align:top; }
 th.check, td.check { width:32px; padding-right:0; text-align:center; }
 input[type=checkbox] { width:15px; height:15px; accent-color:var(--accent); cursor:pointer; }
+td.num.v-escalate { color:var(--escalate); }
+td.num.v-review   { color:var(--review); }
+td.num.v-junk      { color:var(--junk); }
 
 /* bulk actions */
 .bulk-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap;
@@ -164,7 +169,7 @@ td.mono, .mono { font-family:var(--mono); }
 .feedback form { display:flex; gap:12px; flex-wrap:wrap; }
 .btn { font-family:var(--mono); font-size:13px; font-weight:600; cursor:pointer;
   padding:11px 16px; border-radius:8px; border:1px solid var(--line);
-  background:var(--slate-850); color:var(--text); }
+  background:var(--slate-850); color:var(--text); transition:border-color .12s ease; }
 .btn:hover { border-color:var(--slate-700); }
 .btn.tp { border-color:var(--escalate); color:#f0a4a1; }
 .btn.fp { border-color:#2f7d52; color:#7ed3a3; }
@@ -189,6 +194,26 @@ a:focus-visible, .btn:focus-visible, summary:focus-visible {
   outline:2px solid var(--accent); outline-offset:2px; }
 @media (prefers-reduced-motion:reduce) { * { transition:none !important; } }
 @media (max-width:560px) { .wrap { padding:22px 14px 60px; } .rule-desc { max-width:200px; } }
+
+/* small screens: alert/case tables become a stack of cards instead of a
+   horizontally-scrolling table */
+@media (max-width:680px) {
+  .table-wrap table, .table-wrap tbody, .table-wrap tr, .table-wrap td { display:block; }
+  .table-wrap thead { display:none; }
+  .table-wrap tbody tr { border:1px solid var(--line); border-radius:10px; margin:10px; padding:2px 0; }
+  .table-wrap tbody tr.v-escalate { border-left:3px solid var(--escalate); }
+  .table-wrap tbody tr.v-review   { border-left:3px solid var(--review); }
+  .table-wrap tbody tr.v-junk     { border-left:3px solid var(--junk); }
+  .table-wrap td { display:flex; justify-content:space-between; align-items:flex-start;
+    gap:12px; border-bottom:1px solid var(--slate-800); }
+  .table-wrap td:last-child { border-bottom:none; }
+  .table-wrap td::before { content:attr(data-label); flex:0 0 auto; color:var(--faint);
+    font-size:11px; text-transform:uppercase; letter-spacing:0.5px; padding-top:2px; }
+  .table-wrap td.check { justify-content:flex-end; }
+  .table-wrap td.check::before { content:none; }
+  .table-wrap td.rule-cell { flex-direction:column; align-items:flex-start; gap:4px; }
+  .table-wrap td.rule-cell .rule-desc { max-width:100%; }
+}
 """
 
 VERDICT_CLASS = {"ESCALATE": "v-escalate", "REVIEW": "v-review", "JUNK": "v-junk"}
@@ -262,14 +287,14 @@ def _alert_row_html(a, href):
         f'<tr class="{vc}" data-href="{href}" onclick="location.href=\'{href}\'" style="cursor:pointer">'
         f'<td class="check" onclick="event.stopPropagation()">'
         f'<input type="checkbox" name="ids" value="{a["id"]}"></td>'
-        f'<td class="time">{_fmt_time(a["received_at"])}</td>'
-        f'<td class="mono">{_esc(a.get("source") or "—")}</td>'
-        f'<td><span class="mono">{_esc(a["rule_id"] or "—")}</span>'
+        f'<td class="time" data-label="Time">{_fmt_time(a["received_at"])}</td>'
+        f'<td class="mono" data-label="Source">{_esc(a.get("source") or "—")}</td>'
+        f'<td class="rule-cell" data-label="Rule"><span class="mono">{_esc(a["rule_id"] or "—")}</span>'
         f'<div class="rule-desc">{desc}</div></td>'
-        f'<td class="mono">{_esc(a["target"] or "—")}</td>'
-        f'<td class="mono">{_esc(a["src_ip"] or "—")}</td>'
-        f'<td class="num">{a["score"]}</td>'
-        f'<td><span class="pill {vc}">{_esc(a["verdict"])}</span></td>'
+        f'<td class="mono" data-label="Target">{_esc(a["target"] or "—")}</td>'
+        f'<td class="mono" data-label="Source IP">{_esc(a["src_ip"] or "—")}</td>'
+        f'<td class="num {vc}" data-label="Score">{a["score"]}</td>'
+        f'<td data-label="Verdict"><span class="pill {vc}">{_esc(a["verdict"])}</span></td>'
         f"</tr>"
     )
 
@@ -410,12 +435,12 @@ def render_cases(cases):
             href = f"/case/{c['dimension']}/{urllib.parse.quote(str(c['value']), safe='')}"
             rows.append(
                 f'<tr class="{vc}" data-href="{href}" onclick="location.href=\'{href}\'" style="cursor:pointer">'
-                f'<td class="mono">{_esc(DIMENSION_LABEL.get(c["dimension"], c["dimension"]))}</td>'
-                f'<td class="mono">{_esc(c["value"])}</td>'
-                f'<td class="num">{c["count"]}</td>'
-                f'<td class="time">{_fmt_time(c["latest"])}</td>'
-                f'<td><span class="pill {vc}">{_esc(c["rollup_verdict"])}</span></td>'
-                f'<td class="mono">{c["escalate_n"]}/{c["review_n"]}/{c["junk_n"]}</td>'
+                f'<td class="mono" data-label="Shared on">{_esc(DIMENSION_LABEL.get(c["dimension"], c["dimension"]))}</td>'
+                f'<td class="mono" data-label="Value">{_esc(c["value"])}</td>'
+                f'<td class="num {vc}" data-label="Alerts">{c["count"]}</td>'
+                f'<td class="time" data-label="Latest">{_fmt_time(c["latest"])}</td>'
+                f'<td data-label="Verdict"><span class="pill {vc}">{_esc(c["rollup_verdict"])}</span></td>'
+                f'<td class="mono" data-label="E / R / J">{c["escalate_n"]}/{c["review_n"]}/{c["junk_n"]}</td>'
                 f"</tr>"
             )
         table = (
