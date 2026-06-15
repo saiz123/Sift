@@ -40,6 +40,17 @@ WEIGHTS = {
     # File hash flagged as malicious by VirusTotal (needs VIRUSTOTAL_KEY).
     "bad_hash": 50,
 
+    # Source IP appears on a known-malicious IP feed (abuse.ch Feodo Tracker,
+    # abuse.ch SSLBL, or your local blocklist) — confirmed bad infrastructure,
+    # no API key needed. See THREAT_FEEDS.
+    "threat_feed_ip": 50,
+
+    # Source IP is a known Tor exit node. Not inherently malicious — plenty of
+    # legitimate privacy-conscious traffic comes from Tor — but worth a second
+    # look in most enterprise contexts, so it's scored lower than a confirmed
+    # bad-infrastructure hit.
+    "tor_exit_node": 15,
+
     # The alert fired on an asset you marked critical (see CRITICAL_ASSETS).
     "critical_asset": 30,
 
@@ -237,6 +248,47 @@ _load_dotenv()
 
 ABUSEIPDB_KEY = os.environ.get("ABUSEIPDB_KEY", "")
 VIRUSTOTAL_KEY = os.environ.get("VIRUSTOTAL_KEY", "")
+
+# ---------------------------------------------------------------------------
+# Threat-intel IP feeds (free, no API key, no account).
+#
+# Each of these is a plain-text bulk IP blocklist, fetched over HTTPS and
+# cached in the same enrich_cache table as AbuseIPDB/VirusTotal lookups,
+# refreshed at most once every THREAT_FEED_REFRESH_HOURS. A source IP found
+# on any of them contributes WEIGHTS["threat_feed_ip"] (Tor exit nodes are
+# scored separately via WEIGHTS["tor_exit_node"] — see THREAT_FEEDS below).
+#
+# If a feed can't be reached, sift quietly falls back to the last copy it
+# fetched (or skips the signal entirely if it's never fetched at all) —
+# exactly like every other enrichment lookup, it never blocks ingestion.
+#
+# Set ENABLE_THREAT_FEEDS = False to turn all of these off, e.g. for a fully
+# offline/air-gapped sift. LOCAL_BLOCKLIST_PATH below works with no network
+# at all and is unaffected by this flag.
+# ---------------------------------------------------------------------------
+ENABLE_THREAT_FEEDS = True
+THREAT_FEED_REFRESH_HOURS = 12
+
+THREAT_FEEDS = {
+    "feodotracker": "https://feodotracker.abuse.ch/downloads/ipblocklist.txt",
+    "sslbl": "https://sslbl.abuse.ch/blacklist/sslipblacklist.txt",
+    "tor_exit": "https://check.torproject.org/torbulkexitlist",
+}
+
+# Human-readable names for the receipt. "local_blocklist" isn't a real feed
+# above — it's the label for a hit in LOCAL_BLOCKLIST_PATH.
+THREAT_FEED_LABELS = {
+    "feodotracker": "abuse.ch Feodo Tracker (botnet C2 IPs)",
+    "sslbl": "abuse.ch SSLBL (malicious SSL certificate IPs)",
+    "tor_exit": "the Tor exit-node directory",
+    "local_blocklist": "your local blocklist",
+}
+
+# Optional local IP blocklist file: one IP per line, '#' comments allowed,
+# blank lines ignored. For fully air-gapped use (no internet access at all)
+# or to drop in IOCs from a feed sift doesn't fetch directly. A hit here adds
+# WEIGHTS["threat_feed_ip"], same as a hit on any feed above.
+LOCAL_BLOCKLIST_PATH = os.environ.get("SIFT_LOCAL_BLOCKLIST", "")
 
 # ---------------------------------------------------------------------------
 # Outbound notification (optional).

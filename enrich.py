@@ -1,18 +1,27 @@
 """
 Optional threat-intelligence enrichment.
 
-Two lookups, both standard-library HTTP (urllib), both entirely optional:
+Two keyed lookups, both standard-library HTTP (urllib), both entirely
+optional:
   - AbuseIPDB for source-IP reputation
   - VirusTotal for file-hash reputation
 
-If the matching API key isn't set, or the network call fails for any reason,
-the lookup quietly returns None and that signal is simply skipped. sift never
-blocks on enrichment and never crashes because a feed was unreachable — which
-also means it runs fine in an air-gapped environment with no keys at all.
+Plus a set of free, keyless bulk IP blocklists (see config.THREAT_FEEDS):
+abuse.ch Feodo Tracker and SSLBL, the Tor exit-node list, and an optional
+local CSV/text blocklist file for fully air-gapped use.
 
-Results are cached in SQLite so the same IP or hash isn't queried twice.
+If the matching API key isn't set, a feed is disabled, or any network call
+fails for any reason, the lookup quietly returns None/empty and that signal
+is simply skipped. sift never blocks on enrichment and never crashes because
+a feed was unreachable — which also means it runs fine in an air-gapped
+environment with no keys and no internet access at all.
+
+Results are cached in SQLite so the same IP, hash, or feed isn't fetched
+again before it's due to be refreshed.
 """
 
+import datetime as dt
+import ipaddress
 import json
 import urllib.request
 import urllib.parse
@@ -60,6 +69,94 @@ def check_ip(ip):
 
     db.cache_set(cache_key, result)
     return result
+
+
+# --- bulk IP threat feeds ---------------------------------------------------
+
+def _fetch_lines(url):
+    req = urllib.request.Request(url, headers={"User-Agent": "sift/1.0"})
+    with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
+        return resp.read().decode("utf-8", errors="replace").splitlines()
+
+
+def _parse_ip_list(lines):
+    """
+    Pull bare IP addresses out of a bulk feed: skip blank lines and '#'
+    comments, and take the first whitespace/comma-separated token from each
+    remaining line (some feeds append extra columns after the IP).
+    """
+    ips = set()
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        candidate = line.split()[0].split(",")[0]
+        try:
+            ipaddress.ip_address(candidate)
+        except ValueError:
+            continue
+        ips.add(candidate)
+    return ips
+
+
+def _feed_ip_set(name, url):
+    """
+    The IP set for one configured threat feed, cached in enrich_cache and
+    refreshed at most every config.THREAT_FEED_REFRESH_HOURS. Falls back to
+    the last successfully-fetched copy (or an empty set if there's never been
+    one) if the feed can't be reached right now.
+    """
+    cache_key = f"feed:{name}"
+    cached = db.cache_get(cache_key)
+    if cached:
+        fetched_at = dt.datetime.fromisoformat(cached["fetched_at"])
+        age_hours = (dt.datetime.now() - fetched_at).total_seconds() / 3600
+        if age_hours < config.THREAT_FEED_REFRESH_HOURS:
+            return set(cached["ips"])
+
+    try:
+        ips = _parse_ip_list(_fetch_lines(url))
+    except Exception:
+        return set(cached["ips"]) if cached else set()
+
+    db.cache_set(cache_key, {
+        "ips": sorted(ips),
+        "fetched_at": dt.datetime.now().isoformat(timespec="seconds"),
+    })
+    return ips
+
+
+def local_blocklist_ips():
+    """
+    IPs from config.LOCAL_BLOCKLIST_PATH, if set — same format as the bulk
+    feeds above (one IP per line, '#' comments). Read fresh every call since
+    it's a small local file an analyst may edit at any time.
+    """
+    if not config.LOCAL_BLOCKLIST_PATH:
+        return set()
+    try:
+        with open(config.LOCAL_BLOCKLIST_PATH, "r", encoding="utf-8") as fh:
+            return _parse_ip_list(fh)
+    except OSError:
+        return set()
+
+
+def check_ip_feeds(ip):
+    """
+    Returns {'feeds': [names...]} listing which configured threat feeds (see
+    config.THREAT_FEEDS) and/or the local blocklist contain this IP, or None
+    if the IP is empty or matches nothing.
+    """
+    if not ip:
+        return None
+    hits = []
+    if config.ENABLE_THREAT_FEEDS:
+        for name, url in config.THREAT_FEEDS.items():
+            if ip in _feed_ip_set(name, url):
+                hits.append(name)
+    if ip in local_blocklist_ips():
+        hits.append("local_blocklist")
+    return {"feeds": hits} if hits else None
 
 
 def check_hash(file_hash):

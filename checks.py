@@ -90,6 +90,32 @@ def check_bad_ip(alert, ctx):
     )
 
 
+def check_threat_feed_ip(alert, ctx):
+    hits = ctx.get("ip_feed_hit")
+    if not hits:
+        return None
+    feeds = [f for f in hits.get("feeds", []) if f != "tor_exit"]
+    if not feeds:
+        return None
+    names = ", ".join(config.THREAT_FEED_LABELS.get(f, f) for f in feeds)
+    return _line(
+        "Known-malicious source IP",
+        config.WEIGHTS["threat_feed_ip"],
+        f"{alert.get('src_ip')} appears on {names}",
+    )
+
+
+def check_tor_exit(alert, ctx):
+    hits = ctx.get("ip_feed_hit")
+    if not hits or "tor_exit" not in hits.get("feeds", []):
+        return None
+    return _line(
+        "Source is a Tor exit node",
+        config.WEIGHTS["tor_exit_node"],
+        f"{alert.get('src_ip')} is listed in {config.THREAT_FEED_LABELS['tor_exit']}",
+    )
+
+
 def check_bad_hash(alert, ctx):
     intel = ctx.get("hash_intel")
     if not intel:
@@ -274,6 +300,8 @@ ALL_CHECKS = [
     check_severity,
     check_critical_asset,
     check_bad_ip,
+    check_threat_feed_ip,
+    check_tor_exit,
     check_bad_hash,
     check_off_hours,
     check_new_source_for_user,

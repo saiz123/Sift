@@ -127,6 +127,8 @@ transparency, not in cleverness you can't audit.
 | SIEM severity | `+ level × 4` | trust the SIEM's own rating as a baseline |
 | Critical asset | `+30` | the target is on your crown-jewels list |
 | Malicious source IP | `+50` | AbuseIPDB flagged the source *(needs key)* |
+| Known-malicious source IP | `+50` | source IP is on abuse.ch Feodo Tracker/SSLBL or your local blocklist *(free, no key)* |
+| Source is a Tor exit node | `+15` | source IP is a known Tor exit node *(free, no key)* |
 | Malicious file hash | `+50` | VirusTotal flagged the file *(needs key)* |
 | Outside business hours | `+15` | activity at an unusual time |
 | Unfamiliar source for user | `+25` | this user has never alerted from this IP before |
@@ -272,6 +274,31 @@ export VIRUSTOTAL_KEY=...     # file-hash reputation
 Lookups are cached in the database so the same IP or hash is never queried
 twice.
 
+#### Threat-intel feeds (free, no key)
+
+Beyond those two keyed lookups, sift also checks every alert's source IP
+against a handful of free, keyless bulk IP blocklists — on by default,
+nothing to sign up for:
+
+- [abuse.ch Feodo Tracker](https://feodotracker.abuse.ch/) — known botnet C2 IPs
+- [abuse.ch SSLBL](https://sslbl.abuse.ch/) — IPs serving malicious SSL certificates
+- the [Tor exit-node list](https://check.torproject.org/torbulkexitlist) —
+  scored separately and lower (`tor_exit_node`), since Tor traffic isn't
+  inherently malicious
+
+Each feed is fetched over HTTPS and cached for `THREAT_FEED_REFRESH_HOURS`
+(default 12h); if a feed can't be reached, sift falls back to the last copy it
+fetched, or simply skips the signal if it's never fetched one. Set
+`ENABLE_THREAT_FEEDS = False` in `config.py` to turn all three off.
+
+For fully air-gapped use, point `SIFT_LOCAL_BLOCKLIST` at a local text file —
+one IP per line, `#` comments allowed — and sift checks every source IP
+against it too, no internet access required at all:
+
+```bash
+export SIFT_LOCAL_BLOCKLIST=/etc/sift/blocklist.txt
+```
+
 ---
 
 ### Outbound notifications (optional)
@@ -336,6 +363,11 @@ Everything tunable is in [`config.py`](config.py), commented:
 - `CASE_WINDOW_HOURS` / `CASE_MIN_ALERTS` — how recent and how many alerts
   need to share a source user, source IP, or target before they're grouped
   into a case on [`/cases`](#cases)
+- `ENABLE_THREAT_FEEDS` / `THREAT_FEED_REFRESH_HOURS` / `THREAT_FEEDS` — the
+  free bulk IP threat feeds and how often they're refreshed (see
+  [Enrichment](#enrichment-optional))
+- `LOCAL_BLOCKLIST_PATH` (env var `SIFT_LOCAL_BLOCKLIST`) — a local IP
+  blocklist file for fully air-gapped use
 - `GENERIC_FIELD_MAP` — dotted-path field mapping for `POST /webhook/generic`,
   for wiring up a tool that doesn't have a dedicated normaliser
   (see [Other sources](#other-sources))
@@ -352,7 +384,7 @@ config.py        all the dials you tune
 normalize.py     raw alert JSON (Wazuh, Suricata, Elastic, GuardDuty, M365/Graph, generic) -> flat internal alert
 checks.py        the signals — each returns one receipt line or nothing
 scorer.py        gather context, run checks, sum to a score + verdict
-enrich.py        optional AbuseIPDB / VirusTotal lookups
+enrich.py        optional AbuseIPDB / VirusTotal lookups + free bulk IP threat feeds
 notify.py        optional chat webhook on ESCALATE
 db.py            SQLite: alerts, per-rule track record, enrichment cache
 views.py         the dashboard, case views, and the receipt page
@@ -388,9 +420,10 @@ roughly in order:
   auto-advance to the next one in the same filter).
 - **More signals** — identity context (a user alerting from a source IP sift
   has never seen them use before), source-IP velocity (impossible travel,
-  derived from sift's own history — no GeoIP database needed), and allowlists
-  for users/hashes are in. Still open: threat-intel beyond two feeds
-  ([milestone v1.3](#milestones)).
+  derived from sift's own history — no GeoIP database needed), allowlists for
+  users/hashes, and free bulk threat-intel feeds (abuse.ch Feodo
+  Tracker/SSLBL, the Tor exit-node list, and a local blocklist for air-gapped
+  use) are in.
 - **More sources** — Suricata, Elastic/ECS, AWS GuardDuty, M365/Microsoft
   Graph security alerts, and a config-driven generic JSON mapper are in (see
   [Other sources](#other-sources)). Still open: CrowdStrike, osquery
@@ -409,9 +442,10 @@ roughly in order:
 
 ### Milestones
 
-> **v1.2** has landed: alert correlation / [case view](#cases) is live —
-> `/cases`, `/case/<dim>/<value>`, and the `CASE_WINDOW_HOURS` /
-> `CASE_MIN_ALERTS` dials. v1.3-v1.6 below are next, roughly in priority order.
+> **v1.2** and **v1.3** have landed: alert correlation / [case view](#cases)
+> (`/cases`, `/case/<dim>/<value>`) and free bulk threat-intel IP feeds (see
+> [Enrichment](#enrichment-optional)). v1.4-v1.6 below are next, roughly in
+> priority order.
 
 Each milestone is held to the same bar as v1/v1.1: **no AI model, no
 third-party API, no ongoing cost**. Self-hosted infrastructure you already
@@ -424,11 +458,14 @@ webhook is — sift talks to it, but never depends on it being there.
   triages one incident instead of N near-duplicate alerts from the same root
   cause. Each alert keeps its own receipt; the case rolls them up under the
   highest verdict among its members. See [Cases](#cases).
-- **v1.3 — More threat-intel feeds.** Beyond AbuseIPDB/VirusTotal: free,
-  self-hostable feeds such as abuse.ch (URLhaus, Feodo Tracker, SSLBL) and the
-  Tor exit-node list, plus a local CSV/text blocklist import for fully
-  air-gapped use — each wired into `enrich.py` the same way, with the same
-  cache.
+- ~~**v1.3 — More threat-intel feeds.**~~ Shipped. Beyond AbuseIPDB/
+  VirusTotal: free, keyless bulk IP blocklists — abuse.ch Feodo Tracker
+  (botnet C2) and SSLBL (malicious SSL certificate IPs), the Tor exit-node
+  list, and a local CSV/text blocklist for fully air-gapped use — each cached
+  in `enrich_cache` and refreshed every `THREAT_FEED_REFRESH_HOURS`. A feed
+  hit adds `threat_feed_ip` (+50); a Tor exit-node hit is scored separately
+  and lower (`tor_exit_node`, +15), since Tor traffic isn't inherently
+  malicious. See [Threat-intel feeds](#threat-intel-feeds-free-no-key).
 - **v1.4 — CrowdStrike & osquery sources.** Two more normalizers
   (`normalize_crowdstrike`, `normalize_osquery`) following the existing
   pattern, closing out the "More sources" still-open list.

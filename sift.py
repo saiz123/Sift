@@ -286,6 +286,10 @@ def main():
         keys.append("AbuseIPDB")
     if config.VIRUSTOTAL_KEY:
         keys.append("VirusTotal")
+    if config.ENABLE_THREAT_FEEDS:
+        keys.append(f"{len(config.THREAT_FEEDS)} threat feed(s)")
+    if config.LOCAL_BLOCKLIST_PATH:
+        keys.append("local blocklist")
     print(f"  enrichment: {', '.join(keys) if keys else 'off (no API keys set — that is fine)'}")
     print("  Ctrl-C to stop\n")
     try:
