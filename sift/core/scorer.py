@@ -13,9 +13,9 @@ import re
 import sys
 
 import config
-import db
-import enrich
-from checks import ALL_CHECKS
+from ..storage import db
+from . import enrich
+from .checks import ALL_CHECKS
 
 
 def _parse_hour(timestamp):

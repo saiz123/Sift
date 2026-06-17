@@ -28,7 +28,7 @@ import urllib.request
 import urllib.parse
 
 import config
-import db
+from ..storage import db
 
 TIMEOUT_SECONDS = 6
 

@@ -42,8 +42,8 @@ def _guess_endpoint(raw):
 
 
 def cmd_serve(args):
-    import sift
-    sift.main()
+    from sift.server import main
+    main()
 
 
 def cmd_send(args):
@@ -81,7 +81,7 @@ def cmd_send(args):
 
 def cmd_init_user(args):
     import config as cfg
-    import db
+    from sift.storage import db
     db.init_db()
 
     username = input("  Username: ").strip()
@@ -103,13 +103,13 @@ def cmd_init_user(args):
 
 
 def cmd_init_db(args):
-    import db
+    from sift.storage import db
     db.init_db()
     print("  database initialised / migrated.")
 
 
 def cmd_export(args):
-    import db
+    from sift.storage import db
     alerts = db.list_alerts(limit=999999)
     for alert in alerts:
         # receipt_json and raw_json are stored as strings; decode for clean output
@@ -120,7 +120,7 @@ def cmd_export(args):
 
 def cmd_reset_demo(args):
     import config
-    import db
+    from sift.storage import db
 
     confirm = input("  This will DELETE all alerts and reload sample data. Type 'yes' to continue: ")
     if confirm.strip().lower() != "yes":
@@ -145,12 +145,12 @@ def cmd_reset_demo(args):
         return
 
     # Import and insert directly (no running server needed)
-    from normalize import (
+    from sift.core.normalize import (
         normalize_crowdstrike, normalize_elastic, normalize_generic,
         normalize_guardduty, normalize_m365, normalize_osquery,
         normalize_suricata, normalize_wazuh,
     )
-    from scorer import score_alert
+    from sift.core.scorer import score_alert
 
     normalizers = [
         normalize_wazuh, normalize_suricata, normalize_elastic,

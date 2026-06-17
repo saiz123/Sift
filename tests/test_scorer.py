@@ -5,7 +5,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import config
-from scorer import decide, score_alert
+from sift.core.scorer import decide, score_alert
 
 
 def setUpModule():
@@ -14,7 +14,7 @@ def setUpModule():
     _tmp_db = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
     _tmp_db.close()
     config.DB_PATH = _tmp_db.name
-    import db
+    from sift.storage import db
     db.init_db()
 
 

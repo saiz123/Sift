@@ -3,7 +3,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from normalize import normalize_suricata, normalize_crowdstrike, normalize_osquery
+from sift.core.normalize import normalize_suricata, normalize_crowdstrike, normalize_osquery
 
 
 SURICATA_ALERT = {

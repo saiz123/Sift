@@ -33,6 +33,22 @@ sift is a small, opinionated answer to that gap:
 
 ---
 
+## Screenshots
+
+**Dashboard** — live alert feed with verdict badges, score columns, and bulk-triage controls.
+
+![Dashboard](docs/screenshots/dashboard.png)
+
+**Alert detail & receipt** — every point explained, one-click feedback, snooze timer.
+
+![Alert detail](docs/screenshots/alert-detail.png)
+
+**Cases view** — correlated alerts grouped by rule × target pivot.
+
+![Cases](docs/screenshots/cases.png)
+
+---
+
 ## For normal people
 
 Skip this if you're already reaching for `config.py`. This bit is the

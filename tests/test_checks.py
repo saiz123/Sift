@@ -4,7 +4,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import config
-from checks import (
+from sift.core.checks import (
     _wilson_lower_bound, _ip_in_list,
     check_severity, check_critical_asset, check_bad_ip, check_bad_hash,
     check_off_hours, check_new_source_for_user, check_velocity,

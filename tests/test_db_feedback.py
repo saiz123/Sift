@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 def _make_db(path):
     import config as cfg
     cfg.DB_PATH = path
-    import db
+    from sift.storage import db
     db.init_db()
     return db
 

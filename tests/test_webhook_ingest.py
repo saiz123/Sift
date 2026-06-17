@@ -25,7 +25,7 @@ def _start_server():
     cfg.DB_PATH = tmp.name
     cfg.SIFT_WEBHOOK_TOKEN = ""  # no token by default
 
-    import db
+    from sift.storage import db
     db.init_db()
 
     from sift import Handler

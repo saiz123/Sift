@@ -3,7 +3,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from normalize import normalize_wazuh
+from sift.core.normalize import normalize_wazuh
 
 
 FULL = {
