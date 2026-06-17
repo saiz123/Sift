@@ -198,8 +198,54 @@ just the open queue.
 
 ### Wiring it to Wazuh
 
-Add an integration block to the Wazuh manager's `ossec.conf` so it forwards
-alerts to sift, then restart the manager:
+Wazuh delivers alerts to custom integrations via a Python wrapper script. Here
+is the complete setup — it takes about five minutes.
+
+**1. Create the integration script**
+
+Save this as `/var/ossec/integrations/custom-sift` on the Wazuh manager:
+
+```python
+#!/usr/bin/env python3
+"""Wazuh → sift integration. Place at /var/ossec/integrations/custom-sift."""
+import json, sys, urllib.request, urllib.error
+
+# Edit these two lines:
+SIFT_URL   = "http://YOUR_SIFT_HOST:8000/webhook/wazuh"
+SIFT_TOKEN = ""   # set to your SIFT_WEBHOOK_TOKEN if configured
+
+def main():
+    alert_file = sys.argv[1]
+    with open(alert_file, encoding="utf-8") as fh:
+        body = fh.read().encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if SIFT_TOKEN:
+        headers["X-Sift-Webhook-Token"] = SIFT_TOKEN
+    req = urllib.request.Request(SIFT_URL, data=body, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
+        print(f"sift: alert #{result['id']} scored {result['verdict']} ({result['score']})")
+    except urllib.error.URLError as exc:
+        print(f"sift: could not reach {SIFT_URL}: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()
+```
+
+**2. Set permissions**
+
+Wazuh runs integrations as the `ossec` user:
+
+```bash
+chmod 750 /var/ossec/integrations/custom-sift
+chown root:ossec /var/ossec/integrations/custom-sift
+```
+
+**3. Add the integration block to `ossec.conf`**
+
+Edit `/var/ossec/etc/ossec.conf` (on the manager) and add inside `<ossec_config>`:
 
 ```xml
 <integration>
@@ -210,10 +256,25 @@ alerts to sift, then restart the manager:
 </integration>
 ```
 
-`<level>` sets the minimum Wazuh rule level to forward. sift accepts the raw
-Wazuh alert JSON as-is. (A small wrapper script under
-`/var/ossec/integrations/` is the usual way Wazuh delivers these — see the
-Wazuh integration docs for the exact shape on your version.)
+`<level>` sets the minimum Wazuh rule level to forward (3 = low, 12 = high).
+Leave it at 3 to let sift's own scoring decide what matters.
+
+**4. Restart the Wazuh manager**
+
+```bash
+systemctl restart wazuh-manager
+```
+
+**5. Test the integration**
+
+```bash
+# From the Wazuh manager, replay a sample alert:
+/var/ossec/integrations/custom-sift /var/ossec/logs/alerts/alerts.json
+# Expected output:
+# sift: alert #1 scored REVIEW (35)
+```
+
+Check sift's dashboard at `http://YOUR_SIFT_HOST:8000/` to see it appear.
 
 ---
 
