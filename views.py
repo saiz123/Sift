@@ -264,8 +264,19 @@ def page(title, body):
     )
 
 
-def _masthead(nav_links=""):
-    extra = f'<span class="nav-links">{nav_links}</span>' if nav_links else ""
+def _masthead(nav_links="", username=None):
+    parts = []
+    if username:
+        parts.append(
+            f'<form method="post" action="/logout" style="display:inline">'
+            f'<input type="hidden" name="csrf_token" value="">'
+            f'<button type="submit" style="background:none;border:none;cursor:pointer;'
+            f'font-family:var(--mono);font-size:12px;color:var(--muted);padding:0">'
+            f'sign out ({_esc(username)})</button></form>'
+        )
+    if nav_links:
+        parts.append(nav_links)
+    extra = f'<span class="nav-links">{"".join(parts)}</span>' if parts else ""
     return (
         '<div class="masthead"><span class="wordmark">si<b>ft</b>.</span>'
         '<span class="tagline">transparent alert triage</span>' + extra + "</div>"
@@ -299,7 +310,7 @@ def _alert_row_html(a, href):
     )
 
 
-def render_dashboard(alerts, counts, active_filter, q=None, snoozed=False, age=None, snoozed_n=0):
+def render_dashboard(alerts, counts, active_filter, q=None, snoozed=False, age=None, snoozed_n=0, username=None, csrf_token=""):
     chips = []
     chip_defs = [
         (None, "all", sum(counts.values()), ""),
@@ -358,9 +369,10 @@ def render_dashboard(alerts, counts, active_filter, q=None, snoozed=False, age=N
             bulk_hidden += '<input type="hidden" name="snoozed" value="1">'
         if age:
             bulk_hidden += f'<input type="hidden" name="age" value="{_esc(age)}">'
+        csrf_input = f'<input type="hidden" name="csrf_token" value="{_esc(csrf_token)}">'
         table = (
             '<form class="bulk-form" method="post" action="/bulk-feedback">'
-            + bulk_hidden
+            + csrf_input + bulk_hidden
             + '<div class="table-wrap"><table><thead><tr>'
             '<th class="check"><input type="checkbox" id="select-all" title="select all"></th>'
             "<th>Time</th><th>Source</th><th>Rule</th><th>Target</th><th>Source IP</th>"
@@ -419,7 +431,7 @@ def render_dashboard(alerts, counts, active_filter, q=None, snoozed=False, age=N
 
     toolbar = '<div class="toolbar"><div class="chips">' + "".join(chips) + "</div>" + search + "</div>"
     hint = '<div class="hint">j/k or &uarr;/&darr; select &middot; enter open &middot; / search</div>' if alerts else ""
-    body = _masthead('<a class="back" href="/cases">Cases</a>') + toolbar + hint + table
+    body = _masthead('<a class="back" href="/cases">Cases</a>', username=username) + toolbar + hint + table
     return page("sift — triage queue", body)
 
 
@@ -427,7 +439,7 @@ _VERDICT_RANK = {"ESCALATE": 0, "REVIEW": 1, "JUNK": 2}
 DIMENSION_LABEL = {"user": "source user", "ip": "source IP", "target": "target"}
 
 
-def render_cases(cases):
+def render_cases(cases, username=None):
     if cases:
         rows = []
         for c in cases:
@@ -458,14 +470,14 @@ def render_cases(cases):
             "</div></div>"
         )
     body = (
-        _masthead('<a class="back" href="/">&larr; queue</a>')
+        _masthead('<a class="back" href="/">&larr; queue</a>', username=username)
         + '<p class="panel-label">Cases &mdash; related activity worth triaging together</p>'
         + table
     )
     return page("sift — cases", body)
 
 
-def render_case(dimension, value, alerts):
+def render_case(dimension, value, alerts, username=None, csrf_token=""):
     rollup = min((a["verdict"] for a in alerts), key=lambda v: _VERDICT_RANK.get(v, 2)) if alerts else "JUNK"
     vc = VERDICT_CLASS.get(rollup, "")
     label = DIMENSION_LABEL.get(dimension, dimension)
@@ -474,6 +486,7 @@ def render_case(dimension, value, alerts):
     rows = [_alert_row_html(a, f"/alert/{a['id']}") for a in alerts]
     table = (
         '<form class="bulk-form" method="post" action="/bulk-feedback">'
+        f'<input type="hidden" name="csrf_token" value="{_esc(csrf_token)}">'
         f'<input type="hidden" name="case" value="{_esc(case_path)}">'
         '<div class="table-wrap"><table><thead><tr>'
         '<th class="check"><input type="checkbox" id="select-all" title="select all"></th>'
@@ -502,7 +515,7 @@ def render_case(dimension, value, alerts):
         "</div>"
     )
 
-    body = _masthead('<a class="back" href="/cases">&larr; cases</a>') + header + table
+    body = _masthead('<a class="back" href="/cases">&larr; cases</a>', username=username) + header + table
     return page(f"sift — case: {value}", body)
 
 
@@ -583,7 +596,7 @@ def _facts_html(alert):
     return '<div class="facts"><dl>' + rows + "</dl></div>"
 
 
-def _feedback_html(alert, filter_qs=""):
+def _feedback_html(alert, filter_qs="", csrf_token=""):
     if alert["analyst_verdict"] == "true_positive":
         return ('<div class="feedback"><div class="decided">Marked '
                 '<b class="tp">real threat</b> &middot; the rule\'s track record was updated.'
@@ -594,18 +607,20 @@ def _feedback_html(alert, filter_qs=""):
                 "</div></div>")
     aid = alert["id"]
     hidden = f'<input type="hidden" name="from" value="{_esc(filter_qs)}">' if filter_qs else ""
+    csrf = f'<input type="hidden" name="csrf_token" value="{_esc(csrf_token)}">'
     return (
         '<div class="feedback"><p class="panel-label">Your call teaches sift</p>'
         f'<form method="post" action="/alert/{aid}/feedback">'
-        + hidden
+        + csrf + hidden
         + '<button class="btn tp" name="verdict" value="true_positive">Confirm real threat<kbd>t</kbd></button>'
         '<button class="btn fp" name="verdict" value="false_positive">Mark false alarm<kbd>f</kbd></button>'
         "</form></div>"
     )
 
 
-def _snooze_html(alert, filter_qs=""):
+def _snooze_html(alert, filter_qs="", csrf_token=""):
     aid = alert["id"]
+    csrf = f'<input type="hidden" name="csrf_token" value="{_esc(csrf_token)}">'
     hidden = f'<input type="hidden" name="from" value="{_esc(filter_qs)}">' if filter_qs else ""
     snoozed_until = alert.get("snoozed_until")
     active = False
@@ -620,14 +635,14 @@ def _snooze_html(alert, filter_qs=""):
             f'<div class="decided">Snoozed until <b>{_esc(_fmt_time(snoozed_until))}</b>'
             " &mdash; hidden from the queue until then.</div>"
             f'<form method="post" action="/alert/{aid}/unsnooze">'
-            + hidden
+            + csrf + hidden
             + '<button class="btn" type="submit">Wake now</button>'
             "</form></div>"
         )
     return (
         '<div class="snooze"><p class="panel-label">Snooze</p>'
         f'<form method="post" action="/alert/{aid}/snooze">'
-        + hidden
+        + csrf + hidden
         + '<button class="btn" name="hours" value="1">1h</button>'
         '<button class="btn" name="hours" value="4">4h</button>'
         '<button class="btn" name="hours" value="24">24h</button>'
@@ -636,7 +651,7 @@ def _snooze_html(alert, filter_qs=""):
     )
 
 
-def render_detail(alert, filter_qs="", prev_id=None, next_id=None):
+def render_detail(alert, filter_qs="", prev_id=None, next_id=None, username=None, csrf_token=""):
     raw_pretty = json.dumps(json.loads(alert["raw_json"]), indent=2)
     suffix = f"?{filter_qs}" if filter_qs else ""
     nav = ['<a class="back" href="/' + suffix + '">&larr; back to queue</a>']
@@ -644,6 +659,14 @@ def render_detail(alert, filter_qs="", prev_id=None, next_id=None):
         nav.append(f'<a class="back" id="prev-link" href="/alert/{prev_id}{suffix}">&uarr; prev</a>')
     if next_id:
         nav.append(f'<a class="back" id="next-link" href="/alert/{next_id}{suffix}">&darr; next</a>')
+    if username:
+        nav.insert(0, (
+            '<form method="post" action="/logout" style="display:inline">'
+            f'<input type="hidden" name="csrf_token" value="{_esc(csrf_token)}">'
+            '<button type="submit" style="background:none;border:none;cursor:pointer;'
+            'font-family:var(--mono);font-size:12px;color:var(--muted);padding:0">'
+            f'sign out ({_esc(username)})</button></form>'
+        ))
     nav.append('<a class="back" href="/cases">Cases</a>')
     masthead = (
         '<div class="masthead"><span class="wordmark">si<b>ft</b>.</span>'
@@ -652,8 +675,8 @@ def render_detail(alert, filter_qs="", prev_id=None, next_id=None):
     hint = '<div class="hint">t confirm real &middot; f false alarm &middot; j/k next/prev &middot; b back</div>'
     left = (
         '<div><p class="panel-label">Alert</p>' + _facts_html(alert)
-        + _feedback_html(alert, filter_qs)
-        + _snooze_html(alert, filter_qs)
+        + _feedback_html(alert, filter_qs, csrf_token=csrf_token)
+        + _snooze_html(alert, filter_qs, csrf_token=csrf_token)
         + '<details class="raw"><summary>Raw alert JSON</summary><pre>'
         + _esc(raw_pretty) + "</pre></details></div>"
     )
@@ -673,3 +696,51 @@ def render_detail(alert, filter_qs="", prev_id=None, next_id=None):
     )
     body = masthead + hint + '<div class="detail">' + left + right + "</div>" + script
     return page(f"sift — alert #{alert['id']}", body)
+
+
+_INPUT_STYLE = (
+    'style="display:block;width:100%;margin-top:6px;padding:10px 12px;'
+    'font-family:var(--mono);font-size:14px;background:var(--slate-850);'
+    'border:1px solid var(--line);border-radius:8px;color:var(--text)"'
+)
+
+
+def render_login(error=None, no_users=False):
+    header = (
+        '<div class="masthead"><span class="wordmark">si<b>ft</b>.</span>'
+        '<span class="tagline">transparent alert triage</span></div>'
+    )
+    if no_users:
+        body = (
+            header
+            + '<div class="facts" style="max-width:480px;margin:60px auto">'
+            '<p class="panel-label">First-time setup</p>'
+            '<p style="font-size:14px;color:var(--muted);margin-bottom:16px">'
+            'No users are configured yet. Create the first admin account:</p>'
+            '<pre style="background:var(--slate-900);border:1px solid var(--line);'
+            'border-radius:8px;padding:14px;font-family:var(--mono);font-size:13px;'
+            'color:var(--text);margin:0">python cli.py init-user</pre>'
+            '</div>'
+        )
+        return page("sift — setup", body)
+
+    error_html = (
+        f'<div style="background:#2a1212;border:1px solid var(--escalate);color:#f0a4a1;'
+        f'border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:13px">'
+        f'{_esc(error)}</div>'
+    ) if error else ""
+    body = (
+        header
+        + '<form method="post" action="/login" style="max-width:340px;margin:60px auto">'
+        '<p class="panel-label">Sign in</p>'
+        + error_html
+        + f'<label style="display:block;margin-bottom:12px;font-size:13px;color:var(--muted)">'
+        f'Username<input type="text" name="username" required autocomplete="username" autofocus {_INPUT_STYLE}>'
+        f'</label>'
+        f'<label style="display:block;margin-bottom:20px;font-size:13px;color:var(--muted)">'
+        f'Password<input type="password" name="password" required autocomplete="current-password" {_INPUT_STYLE}>'
+        f'</label>'
+        '<button class="btn" type="submit" style="width:100%;padding:12px">Sign in</button>'
+        '</form>'
+    )
+    return page("sift — sign in", body)

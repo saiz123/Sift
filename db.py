@@ -11,7 +11,10 @@ Three tables:
 """
 
 import contextlib
+import hashlib
+import hmac
 import json
+import secrets as _secrets
 import sqlite3
 import datetime as dt
 
@@ -97,13 +100,28 @@ def init_db():
                 created_at  TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_events_alert ON alert_events(alert_id);
+
+            CREATE TABLE IF NOT EXISTS users (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                username      TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                salt          TEXT NOT NULL,
+                role          TEXT NOT NULL DEFAULT 'analyst',
+                created_at    TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS sessions (
+                token      TEXT PRIMARY KEY,
+                username   TEXT NOT NULL,
+                csrf_token TEXT NOT NULL,
+                expires_at TEXT NOT NULL
+            );
             """
         )
         cols = {row["name"] for row in conn.execute("PRAGMA table_info(alerts)").fetchall()}
-        if "snoozed_until" not in cols:
-            conn.execute("ALTER TABLE alerts ADD COLUMN snoozed_until TEXT")
-        if "source" not in cols:
-            conn.execute("ALTER TABLE alerts ADD COLUMN source TEXT")
+        for col in ("snoozed_until", "source", "analyst_user", "decision_reason"):
+            if col not in cols:
+                conn.execute(f"ALTER TABLE alerts ADD COLUMN {col} TEXT")
 
 
 def _now():
@@ -345,7 +363,7 @@ def _adjust_stats(conn, table, where_sql, where_params, previous, analyst_verdic
         conn.execute(f"UPDATE {table} SET total = total + 1, fp = fp + 1 WHERE {where_sql}", where_params)
 
 
-def record_feedback(alert_id, analyst_verdict):
+def record_feedback(alert_id, analyst_verdict, actor=None):
     """
     Save the analyst's call ('true_positive' or 'false_positive') and update
     the rule's running track record, both globally and for this rule on this
@@ -372,8 +390,8 @@ def record_feedback(alert_id, analyst_verdict):
             previous = row["analyst_verdict"]
 
             conn.execute(
-                "UPDATE alerts SET analyst_verdict = ?, decided_at = ? WHERE id = ?",
-                (analyst_verdict, _now(), alert_id),
+                "UPDATE alerts SET analyst_verdict = ?, decided_at = ?, analyst_user = ? WHERE id = ?",
+                (analyst_verdict, _now(), actor, alert_id),
             )
 
             if rule_id:
@@ -554,3 +572,83 @@ def cache_set(key, value):
             """,
             (key, json.dumps(value), _now()),
         )
+
+
+# --- authentication -------------------------------------------------------
+
+def _hash_password(password, salt=None):
+    if salt is None:
+        salt = _secrets.token_hex(32)
+    key = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 260_000)
+    return key.hex(), salt
+
+
+def has_any_user():
+    with _db() as conn:
+        return conn.execute("SELECT COUNT(*) FROM users").fetchone()[0] > 0
+
+
+def create_user(username, password, role="analyst"):
+    phash, salt = _hash_password(password)
+    with _db() as conn:
+        conn.execute(
+            "INSERT INTO users (username, password_hash, salt, role, created_at) VALUES (?,?,?,?,?)",
+            (username, phash, salt, role, _now()),
+        )
+
+
+def verify_user(username, password):
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT id, username, password_hash, salt, role FROM users WHERE username = ?",
+            (username,),
+        ).fetchone()
+    if row is None:
+        return None
+    expected, _ = _hash_password(password, row["salt"])
+    if not hmac.compare_digest(expected, row["password_hash"]):
+        return None
+    return {"id": row["id"], "username": row["username"], "role": row["role"]}
+
+
+def create_session(username):
+    token = _secrets.token_urlsafe(32)
+    csrf_token = _secrets.token_urlsafe(32)
+    expires_at = (
+        dt.datetime.now() + dt.timedelta(hours=config.SESSION_MAX_HOURS)
+    ).isoformat(timespec="seconds")
+    with _db() as conn:
+        conn.execute(
+            "INSERT INTO sessions (token, username, csrf_token, expires_at) VALUES (?,?,?,?)",
+            (token, username, csrf_token, expires_at),
+        )
+    return {"token": token, "csrf_token": csrf_token}
+
+
+def get_session(token):
+    if not token:
+        return None
+    now = _now()
+    with _db() as conn:
+        row = conn.execute(
+            """SELECT s.username, s.csrf_token, u.role
+               FROM sessions s JOIN users u ON s.username = u.username
+               WHERE s.token = ? AND s.expires_at > ?""",
+            (token, now),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def delete_session(token):
+    if not token:
+        return
+    with _db() as conn:
+        conn.execute("DELETE FROM sessions WHERE token = ?", (token,))
+
+
+def list_users():
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT id, username, role, created_at FROM users ORDER BY id"
+        ).fetchall()
+    return [dict(r) for r in rows]

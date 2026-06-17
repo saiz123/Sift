@@ -27,6 +27,7 @@ Pure Python standard library — no pip install, nothing to pull from a CDN.
 """
 
 import datetime as dt
+import hmac
 import json
 import re
 import sys
@@ -49,6 +50,14 @@ from normalize import (
     normalize_wazuh,
 )
 from scorer import enrich_and_rescore, score_alert
+
+
+def _parse_session_cookie(headers):
+    for part in headers.get("Cookie", "").split(";"):
+        name, _, value = part.strip().partition("=")
+        if name.strip() == "sift_session":
+            return value.strip()
+    return ""
 
 
 WEBHOOK_NORMALIZERS = {
@@ -128,6 +137,38 @@ class Handler(BaseHTTPRequestHandler):
             return None  # caller should return 413
         return self.rfile.read(length) if length else b""
 
+    # --- auth helpers -----------------------------------------------------
+    def _require_auth(self):
+        """Return session dict or None (after sending redirect).
+        When no users are configured, returns an anonymous session so the tool
+        works out-of-the-box — auth only enforces once at least one user exists."""
+        if not db.has_any_user():
+            return {"username": None, "role": "admin", "csrf_token": ""}
+        token = _parse_session_cookie(self.headers)
+        sess = db.get_session(token)
+        if sess is None:
+            self._redirect("/login")
+            return None
+        return sess
+
+    def _require_write(self):
+        """Like _require_auth but blocks read_only role."""
+        sess = self._require_auth()
+        if sess is None:
+            return None
+        if sess["role"] == "read_only":
+            self._send(403, views.page("Forbidden", "<p>Your account is read-only.</p>"))
+            return None
+        return sess
+
+    def _check_csrf(self, form, sess):
+        if not sess["csrf_token"]:
+            return True  # no-auth mode — skip CSRF
+        token = form.get("csrf_token", [""])[0]
+        if not token:
+            return False
+        return hmac.compare_digest(token, sess["csrf_token"])
+
     # --- routing ----------------------------------------------------------
     def do_GET(self):
         parsed = urllib.parse.urlparse(self.path)
@@ -135,6 +176,21 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/healthz":
             return self._send_json(200, {"status": "ok"})
+
+        if path == "/login":
+            no_users = not db.has_any_user()
+            if not no_users:
+                token = _parse_session_cookie(self.headers)
+                if db.get_session(token):
+                    return self._redirect("/")
+            return self._send(200, views.render_login(no_users=no_users))
+
+        sess = self._require_auth()
+        if sess is None:
+            return
+
+        username = sess["username"]
+        csrf_token = sess["csrf_token"]
 
         if path == "/":
             params = urllib.parse.parse_qs(parsed.query)
@@ -145,6 +201,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, views.render_dashboard(
                 alerts, db.verdict_counts(), verdict, q,
                 snoozed=snoozed, age=age_hours, snoozed_n=db.snoozed_count(),
+                username=username, csrf_token=csrf_token,
             ))
 
         m = re.fullmatch(r"/alert/(\d+)", path)
@@ -158,12 +215,13 @@ class Handler(BaseHTTPRequestHandler):
             filter_qs = _filter_qs(verdict, q, snoozed, age_hours)
             prev_id, next_id = _neighbor_ids(alert_id, verdict, q, snoozed, age_hours)
             return self._send(200, views.render_detail(
-                alert, filter_qs=filter_qs, prev_id=prev_id, next_id=next_id
+                alert, filter_qs=filter_qs, prev_id=prev_id, next_id=next_id,
+                username=username, csrf_token=csrf_token,
             ))
 
         if path == "/cases":
             cases = db.list_cases(config.CASE_WINDOW_HOURS, config.CASE_MIN_ALERTS)
-            return self._send(200, views.render_cases(cases))
+            return self._send(200, views.render_cases(cases, username=username))
 
         m = re.fullmatch(r"/case/(user|ip|target)/([^/]+)", path)
         if m:
@@ -172,12 +230,20 @@ class Handler(BaseHTTPRequestHandler):
             alerts = db.list_case_alerts(dimension, value, config.CASE_WINDOW_HOURS)
             if not alerts:
                 return self._send(404, views.page("Not found", "<p>No such case.</p>"))
-            return self._send(200, views.render_case(dimension, value, alerts))
+            return self._send(200, views.render_case(
+                dimension, value, alerts, username=username, csrf_token=csrf_token,
+            ))
 
         return self._send(404, views.page("Not found", "<p>Not found.</p>"))
 
     def do_POST(self):
         path = urllib.parse.urlparse(self.path).path
+
+        if path == "/login":
+            return self._handle_login()
+
+        if path == "/logout":
+            return self._handle_logout()
 
         normalize_fn = WEBHOOK_NORMALIZERS.get(path)
         if normalize_fn:
@@ -206,6 +272,38 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_HEAD(self):
         self.do_GET()
+
+    # --- login / logout ---------------------------------------------------
+    def _handle_login(self):
+        body = self._read_body()
+        if body is None:
+            return self._send_json(413, {"error": "request body too large"})
+        form = urllib.parse.parse_qs(body.decode("utf-8"))
+        username = form.get("username", [""])[0].strip()
+        password = form.get("password", [""])[0]
+        user = db.verify_user(username, password)
+        if user is None:
+            return self._send(200, views.render_login(error="Invalid username or password."))
+        sess = db.create_session(user["username"])
+        max_age = config.SESSION_MAX_HOURS * 3600
+        self.send_response(303)
+        self.send_header("Location", "/")
+        self.send_header(
+            "Set-Cookie",
+            f"sift_session={sess['token']}; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}",
+        )
+        self.end_headers()
+
+    def _handle_logout(self):
+        token = _parse_session_cookie(self.headers)
+        db.delete_session(token)
+        self.send_response(303)
+        self.send_header("Location", "/login")
+        self.send_header(
+            "Set-Cookie",
+            "sift_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0",
+        )
+        self.end_headers()
 
     # --- actions ----------------------------------------------------------
     def _ingest(self, normalize_fn):
@@ -249,10 +347,15 @@ class Handler(BaseHTTPRequestHandler):
         if body is None:
             return self._send_json(413, {"error": "request body too large"})
         form = urllib.parse.parse_qs(body.decode("utf-8"))
+        sess = self._require_write()
+        if sess is None:
+            return
+        if not self._check_csrf(form, sess):
+            return self._send(403, views.page("Forbidden", "<p>CSRF token invalid. Please reload the page.</p>"))
         verdict = form.get("verdict", [""])[0]
         if verdict not in ("true_positive", "false_positive"):
             return self._send_json(400, {"error": "verdict must be true_positive or false_positive"})
-        if not db.record_feedback(alert_id, verdict):
+        if not db.record_feedback(alert_id, verdict, actor=sess["username"]):
             return self._send_json(404, {"error": "no such alert"})
         from_qs = form.get("from", [""])[0]
         suffix = f"?{from_qs}" if from_qs else ""
@@ -267,6 +370,11 @@ class Handler(BaseHTTPRequestHandler):
         if body is None:
             return self._send_json(413, {"error": "request body too large"})
         form = urllib.parse.parse_qs(body.decode("utf-8"))
+        sess = self._require_write()
+        if sess is None:
+            return
+        if not self._check_csrf(form, sess):
+            return self._send(403, views.page("Forbidden", "<p>CSRF token invalid. Please reload the page.</p>"))
         try:
             hours = float(form.get("hours", [""])[0])
         except ValueError:
@@ -285,6 +393,11 @@ class Handler(BaseHTTPRequestHandler):
         if body is None:
             return self._send_json(413, {"error": "request body too large"})
         form = urllib.parse.parse_qs(body.decode("utf-8"))
+        sess = self._require_write()
+        if sess is None:
+            return
+        if not self._check_csrf(form, sess):
+            return self._send(403, views.page("Forbidden", "<p>CSRF token invalid. Please reload the page.</p>"))
         if not db.unsnooze_alert(alert_id):
             return self._send_json(404, {"error": "no such alert"})
         from_qs = form.get("from", [""])[0]
@@ -296,12 +409,17 @@ class Handler(BaseHTTPRequestHandler):
         if body is None:
             return self._send_json(413, {"error": "request body too large"})
         form = urllib.parse.parse_qs(body.decode("utf-8"))
+        sess = self._require_write()
+        if sess is None:
+            return
+        if not self._check_csrf(form, sess):
+            return self._send(403, views.page("Forbidden", "<p>CSRF token invalid. Please reload the page.</p>"))
         verdict = form.get("analyst_verdict", [""])[0]
         if verdict not in ("true_positive", "false_positive"):
             return self._send_json(400, {"error": "analyst_verdict must be true_positive or false_positive"})
         for raw_id in form.get("ids", []):
             if raw_id.isdigit():
-                db.record_feedback(int(raw_id), verdict)
+                db.record_feedback(int(raw_id), verdict, actor=sess["username"])
         case_path = form.get("case", [""])[0]
         if case_path:
             return self._redirect(f"/case/{case_path}")

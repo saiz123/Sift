@@ -8,6 +8,7 @@ read from the environment (or a local .env file) instead.
 """
 
 import os
+import secrets as _secrets
 
 # ---------------------------------------------------------------------------
 # Verdict thresholds
@@ -335,3 +336,12 @@ SERVICENOW_ASSIGNMENT_GROUP = os.environ.get("SERVICENOW_ASSIGNMENT_GROUP", "")
 # testing; restrict at the network layer instead).
 # ---------------------------------------------------------------------------
 SIFT_WEBHOOK_TOKEN = os.environ.get("SIFT_WEBHOOK_TOKEN", "")
+
+# ---------------------------------------------------------------------------
+# Session authentication (optional).
+# Set SIFT_SESSION_SECRET to a fixed random hex string so sessions survive
+# server restarts. Leave unset and a new secret is generated each boot
+# (all existing sessions are invalidated on restart — acceptable for dev).
+# ---------------------------------------------------------------------------
+SESSION_MAX_HOURS = int(os.environ.get("SIFT_SESSION_HOURS", "24"))
+SESSION_SECRET = os.environ.get("SIFT_SESSION_SECRET", _secrets.token_hex(32))

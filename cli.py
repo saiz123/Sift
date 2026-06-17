@@ -11,6 +11,7 @@ send auto-detects the source type (same logic as send_sample.py).
 """
 
 import argparse
+import getpass
 import glob
 import json
 import os
@@ -76,6 +77,29 @@ def cmd_send(args):
             continue
         print(f"    {sign(item['points']):>5}  {item['label']}  —  {item['detail']}")
     print(f"\n  view at : {base}/alert/{result['id']}\n")
+
+
+def cmd_init_user(args):
+    import config as cfg
+    import db
+    db.init_db()
+
+    username = input("  Username: ").strip()
+    if not username:
+        print("  error: username cannot be empty.", file=sys.stderr)
+        sys.exit(1)
+    password = getpass.getpass("  Password: ")
+    if len(password) < 8:
+        print("  error: password must be at least 8 characters.", file=sys.stderr)
+        sys.exit(1)
+    role = args.role
+    try:
+        db.create_user(username, password, role)
+        print(f"  user '{username}' created with role '{role}'.")
+        print(f"  visit http://{cfg.HOST}:{cfg.PORT}/login to sign in.")
+    except Exception as exc:
+        print(f"  error: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 
 def cmd_init_db(args):
@@ -170,6 +194,11 @@ def main():
 
     sub.add_parser("init-db", help="initialise or migrate the database")
 
+    p_user = sub.add_parser("init-user", help="create a user account")
+    p_user.add_argument("--role", default="admin",
+                        choices=["admin", "analyst", "read_only"],
+                        help="role for the new user (default: admin)")
+
     p_export = sub.add_parser("export", help="dump all alerts as JSON lines")
     p_export  # no extra args
 
@@ -180,6 +209,7 @@ def main():
         "serve": cmd_serve,
         "send": cmd_send,
         "init-db": cmd_init_db,
+        "init-user": cmd_init_user,
         "export": cmd_export,
         "reset-demo": cmd_reset_demo,
     }[args.command](args)
