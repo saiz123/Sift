@@ -90,6 +90,8 @@ def _scale_to_15(value, max_value):
 
 
 def normalize_wazuh(raw):
+    if not isinstance(raw, dict):
+        return None
     rule = raw.get("rule", {}) if isinstance(raw, dict) else {}
     data = raw.get("data", {}) if isinstance(raw, dict) else {}
     agent = raw.get("agent", {}) if isinstance(raw, dict) else {}
@@ -386,5 +388,134 @@ def normalize_generic(raw):
         "target": _to_str(get("target")),
         "file_hash": _to_str(get("file_hash")),
         "timestamp": get("timestamp"),
+        "raw": raw,
+    }
+
+
+# CrowdStrike Falcon severity names → sift 0-15 scale.
+_CS_SEVERITY_LEVELS = {
+    "critical": 15,
+    "high": 12,
+    "medium": 8,
+    "low": 4,
+    "informational": 1,
+}
+
+
+def normalize_crowdstrike(raw):
+    """
+    Turn a CrowdStrike Falcon DetectionSummaryEvent (from the Falcon Streaming
+    API or a SIEM connector) into sift's flat shape.
+
+    Only DetectionSummaryEvent payloads are processed; anything else returns
+    None so sift can be pointed at a raw event stream without flooding the
+    queue with non-detection events.
+    """
+    if not isinstance(raw, dict):
+        return None
+    event = raw.get("event") if isinstance(raw.get("event"), dict) else raw
+    if event.get("EventType") != "DetectionSummaryEvent":
+        return None
+
+    severity_name = str(event.get("SeverityName") or "").lower()
+    level = _CS_SEVERITY_LEVELS.get(severity_name, 0)
+    severity_detail = (
+        f"CrowdStrike severity '{severity_name}' -> level {level} of 15"
+        if severity_name else "CrowdStrike alert carried no severity"
+    )
+
+    technique = event.get("Technique") or event.get("Tactic") or ""
+    desc = _first(
+        event.get("DetectDescription"),
+        f"{technique}: {event.get('FileName') or ''}" if technique else None,
+        event.get("CommandLine"),
+    )
+
+    # Timestamp: CrowdStrike uses Unix epoch seconds in ProcessStartTime
+    ts = None
+    if event.get("ProcessStartTime"):
+        try:
+            import datetime as _dt
+            ts = _dt.datetime.utcfromtimestamp(float(event["ProcessStartTime"])).isoformat() + "Z"
+        except Exception:
+            pass
+
+    return {
+        "source": "crowdstrike",
+        "rule_id": _to_str(event.get("DetectId") or event.get("Scenario")),
+        "rule_desc": _to_str(desc),
+        "rule_level": level,
+        "severity_detail": severity_detail,
+        "src_ip": _to_str(_first(event.get("RemoteAddress"), event.get("LocalAddress"))),
+        "src_user": _to_str(event.get("UserName")),
+        "target": _to_str(event.get("ComputerName")),
+        "file_hash": _to_str(_first(event.get("SHA256String"), event.get("MD5String"))),
+        "timestamp": ts or raw.get("timestamp"),
+        "raw": raw,
+    }
+
+
+# osquery severity keywords in query names → rough sift level.
+_OSQUERY_SEVERITY_KEYWORDS = {
+    "exec": 10, "process": 10, "shell": 10, "socket": 8, "network": 8,
+    "user": 7, "login": 7, "auth": 7, "file": 6, "cron": 6,
+    "kernel": 9, "rootkit": 12, "hidden": 11,
+}
+
+
+def normalize_osquery(raw):
+    """
+    Turn an osquery differential result — as forwarded by Fleet, osquery
+    logger, or a webhook relay — into sift's flat shape.
+
+    osquery emits results for every scheduled query; only rows with
+    action="added" (new activity) are typically worth triaging — "removed"
+    rows are retained in case the caller wants them but won't auto-escalate.
+    Returns None if the payload doesn't look like an osquery result.
+    """
+    if not isinstance(raw, dict):
+        return None
+    if "name" not in raw or "columns" not in raw:
+        return None
+
+    cols = raw.get("columns") if isinstance(raw.get("columns"), dict) else {}
+    name = str(raw.get("name") or "")
+    action = str(raw.get("action") or "added")
+
+    # Derive severity from query name keywords.
+    level = 0
+    name_lower = name.lower()
+    for kw, pts in _OSQUERY_SEVERITY_KEYWORDS.items():
+        if kw in name_lower:
+            level = max(level, pts)
+    level = min(level, 15)
+    severity_detail = f"osquery query '{name}' (action={action}) -> level {level} of 15"
+
+    # Timestamp: osquery uses Unix epoch in unixTime.
+    ts = None
+    if raw.get("unixTime"):
+        try:
+            import datetime as _dt
+            ts = _dt.datetime.utcfromtimestamp(float(raw["unixTime"])).isoformat() + "Z"
+        except Exception:
+            pass
+
+    src_ip = _to_str(_first(
+        cols.get("remote_address"),
+        cols.get("remote_ip"),
+        cols.get("address"),
+    ))
+
+    return {
+        "source": "osquery",
+        "rule_id": _to_str(name),
+        "rule_desc": _to_str(f"{action}: {name}"),
+        "rule_level": level,
+        "severity_detail": severity_detail,
+        "src_ip": src_ip,
+        "src_user": _to_str(_first(cols.get("username"), cols.get("user"))),
+        "target": _to_str(_first(raw.get("hostIdentifier"), raw.get("hostname"))),
+        "file_hash": _to_str(_first(cols.get("sha256"), cols.get("md5"))),
+        "timestamp": ts,
         "raw": raw,
     }

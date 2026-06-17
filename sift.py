@@ -39,10 +39,12 @@ import db
 import notify
 import views
 from normalize import (
+    normalize_crowdstrike,
     normalize_elastic,
     normalize_generic,
     normalize_guardduty,
     normalize_m365,
+    normalize_osquery,
     normalize_suricata,
     normalize_wazuh,
 )
@@ -55,6 +57,8 @@ WEBHOOK_NORMALIZERS = {
     "/webhook/elastic": normalize_elastic,
     "/webhook/guardduty": normalize_guardduty,
     "/webhook/m365": normalize_m365,
+    "/webhook/crowdstrike": normalize_crowdstrike,
+    "/webhook/osquery": normalize_osquery,
     "/webhook/generic": normalize_generic,
 }
 
@@ -177,6 +181,10 @@ class Handler(BaseHTTPRequestHandler):
 
         normalize_fn = WEBHOOK_NORMALIZERS.get(path)
         if normalize_fn:
+            if config.SIFT_WEBHOOK_TOKEN:
+                incoming = self.headers.get("X-Sift-Webhook-Token", "")
+                if incoming != config.SIFT_WEBHOOK_TOKEN:
+                    return self._send_json(401, {"error": "invalid or missing X-Sift-Webhook-Token"})
             return self._ingest(normalize_fn)
 
         m = re.fullmatch(r"/alert/(\d+)/feedback", path)

@@ -1,0 +1,30 @@
+{
+  "metadata": {
+    "customerIDString": "abc123def456",
+    "eventType": "DetectionSummaryEvent",
+    "eventCreationTime": 1718500000000,
+    "version": "1.0"
+  },
+  "event": {
+    "EventType": "DetectionSummaryEvent",
+    "DetectId": "ldt:abc123:987654321",
+    "DetectDescription": "Credential dumping tool execution detected",
+    "Scenario": "lsass_memory_dump",
+    "Technique": "Credential Dumping",
+    "Tactic": "Credential Access",
+    "SeverityName": "Critical",
+    "Severity": 5,
+    "ComputerName": "dc01",
+    "UserName": "svc_backup",
+    "LocalAddress": "10.0.0.9",
+    "RemoteAddress": "45.146.165.37",
+    "FileName": "procdump.exe",
+    "FilePath": "C:\\Windows\\Temp\\procdump.exe",
+    "CommandLine": "procdump.exe -ma lsass.exe lsass.dmp",
+    "SHA256String": "5d41402abc4b2a76b9719d911017c592e7d8b0c2a1f4e6c9aa00112233445566",
+    "MD5String": "098f6bcd4621d373cade4e832627b4f6",
+    "ProcessStartTime": 1718500000,
+    "ParentImageFileName": "powershell.exe",
+    "PatternDispositionDescription": "Detection, process not blocked"
+  }
+}

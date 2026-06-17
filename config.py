@@ -315,3 +315,23 @@ ESCALATE_WEBHOOK_URL = os.environ.get("ESCALATE_WEBHOOK_URL", "")
 # ---------------------------------------------------------------------------
 THEHIVE_URL = os.environ.get("THEHIVE_URL", "").rstrip("/")
 THEHIVE_API_KEY = os.environ.get("THEHIVE_API_KEY", "")
+
+# ---------------------------------------------------------------------------
+# ServiceNow (optional).
+# Set SERVICENOW_INSTANCE (e.g. https://dev12345.service-now.com) plus
+# SERVICENOW_USER and SERVICENOW_PASSWORD to open an incident for every
+# ESCALATE verdict. SERVICENOW_ASSIGNMENT_GROUP is optional.
+# ---------------------------------------------------------------------------
+SERVICENOW_INSTANCE = os.environ.get("SERVICENOW_INSTANCE", "").rstrip("/")
+SERVICENOW_USER = os.environ.get("SERVICENOW_USER", "")
+SERVICENOW_PASSWORD = os.environ.get("SERVICENOW_PASSWORD", "")
+SERVICENOW_ASSIGNMENT_GROUP = os.environ.get("SERVICENOW_ASSIGNMENT_GROUP", "")
+
+# ---------------------------------------------------------------------------
+# Webhook authentication (optional but strongly recommended).
+# Set SIFT_WEBHOOK_TOKEN to any secret string. All /webhook/* POSTs must then
+# include the header:  X-Sift-Webhook-Token: <your-token>
+# Leave unset and all webhooks are accepted without a token (useful for local
+# testing; restrict at the network layer instead).
+# ---------------------------------------------------------------------------
+SIFT_WEBHOOK_TOKEN = os.environ.get("SIFT_WEBHOOK_TOKEN", "")

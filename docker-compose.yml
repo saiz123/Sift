@@ -1,0 +1,16 @@
+services:
+  sift:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/data
+    environment:
+      SIFT_HOST: 0.0.0.0
+      SIFT_DB: /data/sift.db
+      # Uncomment and set to enable webhook authentication:
+      # SIFT_WEBHOOK_TOKEN: change-me
+      # Uncomment to enable enrichment:
+      # ABUSEIPDB_KEY: ""
+      # VIRUSTOTAL_KEY: ""
+    restart: unless-stopped

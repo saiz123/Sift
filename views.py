@@ -509,7 +509,11 @@ def render_case(dimension, value, alerts):
 def _receipt_html(alert):
     receipt = json.loads(alert["receipt_json"])
     lines = []
+    enrich_meta = None
     for item in receipt:
+        if "_enrich_meta" in item:
+            enrich_meta = item["_enrich_meta"]
+            continue
         pts = item["points"]
         sign = "+" if pts >= 0 else "-"
         cls = "pos" if pts >= 0 else "neg"
@@ -524,6 +528,25 @@ def _receipt_html(alert):
     if not lines:
         lines.append('<div class="li"><span class="label">No signals fired</span>'
                      '<span class="leader"></span><span class="pts">0</span></div>')
+
+    if enrich_meta:
+        parts = []
+        if enrich_meta.get("ip_checked"):
+            parts.append("AbuseIPDB: checked")
+        elif enrich_meta.get("ip_skipped"):
+            parts.append(f"AbuseIPDB: skipped ({enrich_meta['ip_skipped']})")
+        if enrich_meta.get("hash_checked"):
+            parts.append("VirusTotal: checked")
+        elif enrich_meta.get("hash_skipped"):
+            parts.append(f"VirusTotal: skipped ({enrich_meta['hash_skipped']})")
+        if parts:
+            lines.append(
+                f'<div class="li enrich-meta" style="opacity:.6;font-size:11px;border-top:1px solid #eee;margin-top:4px">'
+                f'<span class="label" style="font-style:italic">Enrichment</span>'
+                f'<span class="leader"></span>'
+                f'<span class="detail">{_esc(" · ".join(parts))}</span>'
+                f'</div>'
+            )
 
     score = alert["score"]
     total_sign = "+" if score >= 0 else "-"

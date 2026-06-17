@@ -1,0 +1,23 @@
+{
+  "name": "process_network_connections",
+  "hostIdentifier": "web-frontend-02",
+  "calendarTime": "Mon Jun 16 03:14:07 2025 UTC",
+  "unixTime": 1718500447,
+  "action": "added",
+  "columns": {
+    "pid": "4821",
+    "name": "python3",
+    "cmdline": "python3 -c import socket,subprocess,os;...",
+    "remote_address": "45.146.165.37",
+    "remote_port": "4444",
+    "local_address": "10.10.5.23",
+    "local_port": "51234",
+    "state": "ESTABLISHED",
+    "username": "www-data",
+    "sha256": "a87ff679a2f3e71d9181a67b7542122c"
+  },
+  "decorations": {
+    "host_uuid": "4c4c4544-0044-4210-8031-c2c04f524631",
+    "username": "www-data"
+  }
+}

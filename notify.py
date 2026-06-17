@@ -1,18 +1,18 @@
 """
 Outbound actions — when sift scores an alert ESCALATE, push a short summary
-to a chat webhook and/or create an alert in TheHive.
+to a chat webhook and/or create a ticket in TheHive or ServiceNow.
 
-Set ESCALATE_WEBHOOK_URL (env var or .env) to a Slack, Mattermost, or Discord
-incoming-webhook URL for a chat summary. Set THEHIVE_URL and THEHIVE_API_KEY
-to also (or instead) create a TheHive alert carrying the full receipt. Either,
-both, or neither can be configured — leave them unset and this module does
-nothing.
+Set ESCALATE_WEBHOOK_URL for a Slack/Mattermost/Discord chat summary.
+Set THEHIVE_URL + THEHIVE_API_KEY to create a TheHive alert with the full receipt.
+Set SERVICENOW_INSTANCE + SERVICENOW_USER + SERVICENOW_PASSWORD to open a
+ServiceNow incident — the most common SOC ticketing workflow.
 
-Each POST runs on its own background thread with a short timeout, and any
-failure is swallowed — a slow or unreachable endpoint never delays or breaks
-alert ingestion.
+Any combination (or none) can be configured. Every outbound call runs on its
+own background daemon thread with a short timeout — a slow or unreachable
+endpoint never delays or breaks alert ingestion.
 """
 
+import base64
 import json
 import sys
 import threading
@@ -31,6 +31,10 @@ def notify_escalation(alert_id, alert, score, receipt):
     if config.THEHIVE_URL and config.THEHIVE_API_KEY:
         threading.Thread(
             target=_post_thehive, args=(alert_id, alert, score, receipt), daemon=True
+        ).start()
+    if config.SERVICENOW_INSTANCE and config.SERVICENOW_USER and config.SERVICENOW_PASSWORD:
+        threading.Thread(
+            target=_post_servicenow, args=(alert_id, alert, score, receipt), daemon=True
         ).start()
 
 
@@ -120,3 +124,41 @@ def _post_thehive(alert_id, alert, score, receipt):
         urllib.request.urlopen(req, timeout=5)
     except Exception as exc:
         print(f"  [notify] TheHive create-alert failed: {exc!r}", file=sys.stderr)
+
+
+def _snow_urgency(score):
+    """Map sift score to ServiceNow urgency/impact (1=Critical, 2=High, 3=Medium)."""
+    if score >= 100:
+        return 1
+    if score >= 80:
+        return 2
+    return 3
+
+
+def _post_servicenow(alert_id, alert, score, receipt):
+    desc = _thehive_description(alert_id, alert, score, receipt)
+    body = json.dumps({
+        "short_description": f"sift ESCALATE #{alert_id}: {alert.get('rule_desc') or alert.get('rule_id') or 'alert'}",
+        "description": desc,
+        "category": "Security",
+        "urgency": str(_snow_urgency(score)),
+        "impact": str(_snow_urgency(score)),
+        "assignment_group": config.SERVICENOW_ASSIGNMENT_GROUP,
+        "caller_id": config.SERVICENOW_USER,
+    }).encode("utf-8")
+    credentials = base64.b64encode(
+        f"{config.SERVICENOW_USER}:{config.SERVICENOW_PASSWORD}".encode()
+    ).decode()
+    req = urllib.request.Request(
+        config.SERVICENOW_INSTANCE + "/api/now/table/incident",
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Authorization": f"Basic {credentials}",
+        },
+    )
+    try:
+        urllib.request.urlopen(req, timeout=5)
+    except Exception as exc:
+        print(f"  [notify] ServiceNow incident creation failed: {exc!r}", file=sys.stderr)

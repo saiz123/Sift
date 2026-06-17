@@ -79,8 +79,24 @@ def init_db():
                 cached_at TEXT NOT NULL
             );
 
-            CREATE INDEX IF NOT EXISTS idx_alerts_received ON alerts(received_at);
-            CREATE INDEX IF NOT EXISTS idx_alerts_dedup    ON alerts(rule_id, src_ip);
+            CREATE INDEX IF NOT EXISTS idx_alerts_received  ON alerts(received_at);
+            CREATE INDEX IF NOT EXISTS idx_alerts_dedup     ON alerts(rule_id, src_ip);
+            CREATE INDEX IF NOT EXISTS idx_alerts_verdict   ON alerts(verdict);
+            CREATE INDEX IF NOT EXISTS idx_alerts_src_user  ON alerts(src_user);
+            CREATE INDEX IF NOT EXISTS idx_alerts_src_ip    ON alerts(src_ip);
+            CREATE INDEX IF NOT EXISTS idx_alerts_target    ON alerts(target);
+            CREATE INDEX IF NOT EXISTS idx_alerts_rule_recv ON alerts(rule_id, received_at);
+
+            CREATE TABLE IF NOT EXISTS alert_events (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                alert_id    INTEGER NOT NULL,
+                event_type  TEXT NOT NULL,
+                actor       TEXT,
+                old_value   TEXT,
+                new_value   TEXT,
+                created_at  TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_events_alert ON alert_events(alert_id);
             """
         )
         cols = {row["name"] for row in conn.execute("PRAGMA table_info(alerts)").fetchall()}
@@ -92,6 +108,32 @@ def init_db():
 
 def _now():
     return dt.datetime.now().isoformat(timespec="seconds")
+
+
+# --- audit log ------------------------------------------------------------
+
+def log_event(alert_id, event_type, actor=None, old_value=None, new_value=None):
+    """Append a row to alert_events. Never raises — audit failures must not break ingestion."""
+    try:
+        with _db() as conn:
+            conn.execute(
+                """
+                INSERT INTO alert_events (alert_id, event_type, actor, old_value, new_value, created_at)
+                VALUES (?,?,?,?,?,?)
+                """,
+                (alert_id, event_type, actor, old_value, new_value, _now()),
+            )
+    except Exception:
+        pass
+
+
+def get_alert_events(alert_id):
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM alert_events WHERE alert_id = ? ORDER BY id",
+            (alert_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 # --- alerts ---------------------------------------------------------------
@@ -121,7 +163,10 @@ def insert_alert(alert, score, verdict, receipt):
                 json.dumps(alert.get("raw", {})),
             ),
         )
-        return cur.lastrowid
+        alert_id = cur.lastrowid
+    log_event(alert_id, "alert_ingested", new_value=alert.get("source"))
+    log_event(alert_id, "alert_scored", new_value=verdict)
+    return alert_id
 
 
 def get_alert(alert_id):
@@ -206,7 +251,10 @@ def snooze_alert(alert_id, until_iso):
         cur = conn.execute(
             "UPDATE alerts SET snoozed_until = ? WHERE id = ?", (until_iso, alert_id)
         )
-        return cur.rowcount > 0
+        ok = cur.rowcount > 0
+    if ok:
+        log_event(alert_id, "snoozed", new_value=until_iso)
+    return ok
 
 
 def unsnooze_alert(alert_id):
@@ -214,7 +262,10 @@ def unsnooze_alert(alert_id):
         cur = conn.execute(
             "UPDATE alerts SET snoozed_until = NULL WHERE id = ?", (alert_id,)
         )
-        return cur.rowcount > 0
+        ok = cur.rowcount > 0
+    if ok:
+        log_event(alert_id, "unsnoozed")
+    return ok
 
 
 def count_recent_duplicates(rule_id, src_ip, window_hours):
@@ -345,6 +396,7 @@ def record_feedback(alert_id, analyst_verdict):
         except Exception:
             conn.rollback()
             raise
+    log_event(alert_id, f"feedback_{analyst_verdict}", old_value=previous, new_value=analyst_verdict)
     return True
 
 

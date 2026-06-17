@@ -54,10 +54,28 @@ def _build_local_context(alert):
 
 def _build_enrich_context(alert):
     """Fetch threat-intel from external APIs — may block on network."""
+    ip = alert.get("src_ip")
+    file_hash = alert.get("file_hash")
+
+    ip_intel = enrich.check_ip(ip)
+    ip_feed_hit = enrich.check_ip_feeds(ip)
+    hash_intel = enrich.check_hash(file_hash)
+
+    meta = {
+        "ip_checked": ip_intel is not None,
+        "ip_skipped": (None if ip_intel is not None
+                       else ("no ip" if not ip else ("no key" if not config.ABUSEIPDB_KEY else "failed"))),
+        "hash_checked": hash_intel is not None,
+        "hash_skipped": (None if hash_intel is not None
+                         else ("no hash" if not file_hash else ("no key" if not config.VIRUSTOTAL_KEY else "failed"))),
+        "feeds_checked": ip_feed_hit is not None or config.ENABLE_THREAT_FEEDS,
+    }
+
     return {
-        "ip_intel": enrich.check_ip(alert.get("src_ip")),
-        "ip_feed_hit": enrich.check_ip_feeds(alert.get("src_ip")),
-        "hash_intel": enrich.check_hash(alert.get("file_hash")),
+        "ip_intel": ip_intel,
+        "ip_feed_hit": ip_feed_hit,
+        "hash_intel": hash_intel,
+        "_enrich_meta": meta,
     }
 
 
@@ -97,9 +115,13 @@ def enrich_and_rescore(alert_id, alert, initial_verdict):
     enriched verdict escalates beyond the initial one, fires a notification.
     """
     try:
-        ctx = {**_build_local_context(alert), **_build_enrich_context(alert)}
+        enrich_ctx = _build_enrich_context(alert)
+        ctx = {**_build_local_context(alert), **enrich_ctx}
         receipt = _run_checks(alert, ctx)
-        score = sum(line["points"] for line in receipt)
+        # Append enrichment metadata as a non-scoring sentinel entry
+        if "_enrich_meta" in enrich_ctx:
+            receipt = receipt + [{"_enrich_meta": enrich_ctx["_enrich_meta"]}]
+        score = sum(line.get("points", 0) for line in receipt)
         verdict = decide(score)
         db.update_alert_score(alert_id, score, verdict, receipt)
         if verdict == "ESCALATE" and initial_verdict != "ESCALATE":
