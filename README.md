@@ -37,15 +37,15 @@ sift is a small, opinionated answer to that gap:
 
 **Dashboard** — live alert feed with verdict badges, score columns, and bulk-triage controls.
 
-![Dashboard](docs/screenshots/dashboard.png)
+![Dashboard](docs/screenshots/dashboard.svg)
 
 **Alert detail & receipt** — every point explained, one-click feedback, snooze timer.
 
-![Alert detail](docs/screenshots/alert-detail.png)
+![Alert detail](docs/screenshots/alert-detail.svg)
 
 **Cases view** — correlated alerts grouped by rule × target pivot.
 
-![Cases](docs/screenshots/cases.png)
+![Cases](docs/screenshots/cases.svg)
 
 ---
 
