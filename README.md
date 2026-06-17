@@ -2,220 +2,221 @@
 
 **Transparent, self-hosted alert triage that explains every decision and learns from your analysts.**
 
-SOC analysts drown in alerts — thousands a day, most of them false alarms. The
-two tools meant to help both have a catch: classic SOAR follows rigid
-playbooks that break on anything new, and the AI triage products are
-expensive, closed boxes that tell you *what* but never *why*. So analysts
-don't trust them, and real threats stay buried in the noise.
+[![CI](https://github.com/saiz123/Sift/actions/workflows/ci.yml/badge.svg)](https://github.com/saiz123/Sift/actions/workflows/ci.yml)
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
+![Zero dependencies](https://img.shields.io/badge/dependencies-zero-brightgreen)
+![License: MIT](https://img.shields.io/badge/license-MIT-blue)
+
+SOC analysts drown in alerts — hundreds a day, most of them false alarms. Classic SOAR follows rigid playbooks that break on anything new; AI triage products are expensive, closed boxes that say *what* but never *why*. Analysts stop trusting them. Real threats stay buried.
 
 sift is a small, opinionated answer to that gap:
 
-- **It shows its work.** Every alert gets an itemised *receipt* — each signal,
-  the points it added or removed, and a plain-English reason. An analyst can
-  agree or overrule in five seconds. No black box.
-- **It learns from you.** When an analyst marks an alert a false alarm, the
-  rule that fired it is trusted a little less next time — automatically, and
-  visibly on the receipt. No playbook to rewrite.
-- **It runs anywhere.** Pure Python standard library. No `pip install`, no
-  CDN, no web fonts. Clone it and run it — including on an air-gapped box.
-
-> sift is a starting point, not a finished SIEM. It's built to be read,
-> forked, and extended. See the [roadmap](#roadmap).
-
-> [!NOTE]
-> **Full disclosure:** sift was built with an AI coding assistant — the kind
-> whose "yearly" token quota has a way of evaporating in about a month of
-> real use. Somewhere around the third top-up, the project came out the other
-> side with strong feelings about software that needs a live AI subscription
-> just to tell you a login looks weird at 3am. So sift doesn't have one.
-> Every signal above runs on data it already owns, for the price of
-> electricity. The irony is noted. The bill is not.
+- **It shows its work.** Every alert gets an itemised *receipt* — each signal, the points it added or removed, and a plain-English reason. An analyst can agree or overrule in five seconds.
+- **It learns from you.** When an analyst marks an alert a false alarm, the rule that fired it is trusted a little less next time — automatically, visibly, no playbook to rewrite.
+- **It runs anywhere.** Pure Python standard library. No `pip install`, no CDN, no web fonts. Clone and run — including on an air-gapped box.
+- **No ongoing cost.** Every signal runs on data it already owns. No per-alert API fee, no AI subscription.
 
 ---
 
 ## Screenshots
 
-**Dashboard** — live alert feed with verdict badges, score columns, and bulk-triage controls.
+**Dashboard** — alert feed with verdict badges, score columns, and bulk-triage controls.
 
 ![Dashboard](docs/screenshots/dashboard.svg)
 
-**Alert detail & receipt** — every point explained, one-click feedback, snooze timer.
+**Alert detail & receipt** — every scoring point explained, one-click feedback, snooze timer.
 
 ![Alert detail](docs/screenshots/alert-detail.svg)
 
-**Cases view** — correlated alerts grouped by rule × target pivot.
+**Cases** — correlated alerts grouped by rule × target pivot.
 
 ![Cases](docs/screenshots/cases.svg)
 
 ---
 
-## For normal people
+## Quick start
 
-Skip this if you're already reaching for `config.py`. This bit is the
-elevator-pitch version for anyone who clicked a link and wants to know what
-this thing actually does.
-
-**The problem:** every security tool — antivirus, firewalls, cloud logs —
-fires off alerts. Most of them are nothing. A few of them are everything. The
-hard part isn't *detecting* trouble, it's figuring out which of today's 500
-alerts deserve five minutes of a human's attention.
-
-**What sift does:** it reads every alert as it arrives and writes a little
-*receipt* — a few lines explaining, in plain English, why the alert looks
-scary or boring. Something like:
-
-```
-+48  SIEM severity            — the security tool rated this a 12 out of 15
-+30  Critical asset           — this happened on your domain controller
-+15  Outside business hours   — nobody should be doing this at 3am
-```
-
-Add those up, and sift sorts the alert into one of three piles: **ignore it**
-(but keep the receipt, just in case), **someone should glance at this**, or
-**look at this right now**. Whenever a human corrects it — "no, that one was
-nothing" — sift remembers, and that kind of alert gets quieter on its own
-next time.
-
-**What it costs:** nothing, on an ongoing basis. No subscription, no
-per-alert API fee, no "AI SOC analyst" bill that scales with how paranoid you
-are. It's a small Python program and a database file — run it on a laptop, a
-spare server, or an air-gapped box.
-
-### Try it
-
-You need Python 3.10 or newer and nothing else.
+You need Python 3.10 or newer. No other dependencies.
 
 ```bash
-python3 sift.py
+git clone https://github.com/saiz123/Sift.git
+cd Sift
+python cli.py serve
 ```
 
-Then, in another terminal, feed it a sample alert:
+In another terminal, load the sample alerts:
 
 ```bash
-python3 send_sample.py sample_alerts/real_attack.json
+python cli.py reset-demo
+```
+
+Open **http://127.0.0.1:8000/** — the dashboard shows 10 sample alerts across all three verdict buckets. Click any alert to see its full receipt.
+
+Or send a single alert from the command line:
+
+```bash
+python cli.py send sample_alerts/real_attack.json
 ```
 
 ```
-  verdict: ESCALATE   score: 93   (alert #1)
-  receipt:
-      +48  SIEM severity  —  Wazuh rule level 12 of 15
-      +30  Critical asset  —  Target 'dc01' matches critical asset 'dc01'
+  verdict : ESCALATE   score: 93   (alert #1)
+  receipt :
+      +48  SIEM severity        —  Wazuh rule level 12 of 15
+      +30  Critical asset       —  Target 'dc01' matches critical asset 'dc01'
       +15  Outside business hours  —  Activity at 03:00, outside 08:00-18:00
 ```
 
-Open **http://127.0.0.1:8000/** to see it land in the triage queue, and click
-it to see the full receipt.
+### Docker
+
+```bash
+docker compose up
+```
+
+The database is persisted to `./data/sift.db`. Override settings via the `environment:` block in `docker-compose.yml` or a `.env` file.
 
 ---
 
-## For nerds
+## Authentication
 
-The rest of this document is the technical reference — architecture, the
-scoring model, wiring sift up to real sources, and every dial in
-`config.py`.
+Authentication is **off by default** (zero friction on a fresh install). The moment you create a user account, the login page is enforced for all routes.
 
-### How it works
+```bash
+# Create your first admin account
+python cli.py init-user
 
-```
-   SIEM alert ──POST──▶  /webhook/<source>
-                              │
-                   normalize (flatten the JSON)
-                              │
-                   score  (run every signal check)
-                              │
-        ┌─────────────────────┼─────────────────────┐
-   score < 20              20 – 59              score ≥ 60
-     JUNK                   REVIEW               ESCALATE
-  auto-closed,          a human judges        look at this now
-  kept with reasons     when they can
+# Or specify a role upfront:
+python cli.py init-user --role analyst
 ```
 
-Each alert is run through a set of independent **signals**. A signal either
-stays silent or adds one line to the receipt: a label, a point value, and a
-reason. The points are summed into a score, and the score picks the verdict.
-That's the whole model — deliberately simple, because the value is in the
-transparency, not in cleverness you can't audit.
+Roles:
 
-#### The signals
+| Role | What they can do |
+|------|-----------------|
+| `admin` | Full access — feedback, snooze, bulk actions, user management |
+| `analyst` | Full access to all triage operations |
+| `read_only` | Dashboard and alert views only; POST routes return 403 |
 
-| Signal | Effect | Why |
-| --- | --- | --- |
-| SIEM severity | `+ level × 4` | trust the SIEM's own rating as a baseline |
-| Critical asset | `+30` | the target is on your crown-jewels list |
-| Malicious source IP | `+50` | AbuseIPDB flagged the source *(needs key)* |
-| Known-malicious source IP | `+50` | source IP is on abuse.ch Feodo Tracker/SSLBL or your local blocklist *(free, no key)* |
-| Source is a Tor exit node | `+15` | source IP is a known Tor exit node *(free, no key)* |
-| Malicious file hash | `+50` | VirusTotal flagged the file *(needs key)* |
-| Outside business hours | `+15` | activity at an unusual time |
-| Unfamiliar source for user | `+25` | this user has never alerted from this IP before |
-| Source-IP velocity | `+35` | this user alerted from 3+ different source IPs within an hour — impossible travel without needing a GeoIP database |
-| Historically noisy rule | up to `−45` | analysts keep marking this rule a false alarm (scoped per-asset once an asset has its own track record) |
-| Rule activity spike | `+10` | this rule has fired well above its own historical average recently — a quiet rule turning noisy, or a real incident |
-| Repeated noise | `−20` | a flood of identical alerts (scanner-like) |
-| Trusted source | `−60` | the source IP is on your allowlist |
-| Trusted user | `−40` | the user is on your allowlist (e.g. a service account) |
-| Trusted file hash | `−40` | the hash is on your allowlist (e.g. an internal tool) |
+Sessions are stored in the database with a 24-hour TTL (`SIFT_SESSION_HOURS`). CSRF tokens are injected into every POST form automatically. Passwords are hashed with PBKDF2-HMAC-SHA256 (260,000 iterations).
 
-Every number lives in [`config.py`](config.py). Tune them to your environment.
+---
 
-#### The learning loop
+## CLI reference
 
-This is what keeps sift from going stale. On the alert page, an analyst marks
-each handled alert **Confirm real threat** or **Mark false alarm**. sift keeps
-a per-rule tally, and the *Historically noisy rule* signal reads from it:
+```
+python cli.py serve              start the sift server
+python cli.py send <file.json>   POST an alert file to a running sift
+python cli.py init-db            initialise or migrate the database
+python cli.py init-user          create a user account (interactive)
+python cli.py export             dump all alerts as JSON lines to stdout
+python cli.py reset-demo         clear the DB and reload sample_alerts/
+```
+
+`send` auto-detects the source type from the JSON shape, so every sample alert works with the same command. Pass `--endpoint /webhook/wazuh` to override.
+
+You can also run the server directly:
+
+```bash
+python sift.py          # same as cli.py serve
+python -m sift          # same, package entry point
+```
+
+---
+
+## How it works
+
+```
+   Alert ──POST──▶  /webhook/<source>
+                         │
+              normalize (flatten the JSON)
+                         │
+              score  (run every signal check)
+                         │
+     ┌─────────────────────┼─────────────────────┐
+score < 20             20 – 59              score ≥ 60
+  JUNK                  REVIEW               ESCALATE
+auto-closed,        a human judges        look at this now
+kept with reasons   when they can
+```
+
+Each alert passes through a set of independent **signals**. A signal either stays silent or adds one line to the receipt: a label, a point value, and a reason. The points sum to a score; the score picks the verdict.
+
+### Scoring signals
+
+| Signal | Points | Notes |
+|--------|--------|-------|
+| SIEM severity | `level × 4` | Source severity normalised to sift's 0-15 scale |
+| Critical asset | +30 | Target matches a substring in `CRITICAL_ASSETS` |
+| Malicious IP (AbuseIPDB) | +50 | Requires `ABUSEIPDB_KEY` |
+| Threat-feed IP | +50 | abuse.ch Feodo Tracker / SSLBL / local blocklist — free, no key |
+| Tor exit node | +15 | Not inherently malicious, scored separately |
+| Malicious hash (VirusTotal) | +50 | Requires `VIRUSTOTAL_KEY` |
+| Outside business hours | +15 | Activity outside `BUSINESS_START`–`BUSINESS_END` |
+| New source for user | +25 | User seen before, but never from this IP |
+| IP velocity | +35 | User alerted from 3+ distinct IPs within an hour — impossible-travel pattern, no GeoIP needed |
+| Rule activity spike | +10 | Rule firing well above its own historical average |
+| Historically noisy rule | up to −45 | Scales with Wilson confidence interval on the FP rate (per-asset once enough data exists) |
+| Duplicate flood | −20 | 50+ identical alerts from the same source in 24 h |
+| Allowlisted IP | −60 | Source IP is on your trusted list (plain address or CIDR) |
+| Allowlisted user | −40 | Source user is on your trusted list |
+| Allowlisted hash | −40 | File hash is on your trusted list |
+
+Every weight lives in [`config.py`](config.py). Tune them to your environment.
+
+### The learning loop
+
+On the alert page, an analyst marks each alert **Confirm real threat** or **Mark false alarm**. sift keeps a per-rule tally and penalises noisy rules automatically:
 
 ```
 First time a noisy rule fires:    REVIEW       (+20, no track record yet)
-First 'false alarm' verdict:      JUNK         (+20 −9  = +11)
-                                                └─ "false alarm 1/1 times (100%) —
-                                                    21% confident it's at least that noisy"
-After 12 'false alarm' verdicts:  deeper JUNK  (+20 −34 = −14)
-                                                └─ "false alarm 12/12 times (100%) —
-                                                    76% confident it's at least that noisy"
+After 1 'false alarm' verdict:    barely moves (+20 − 9  = +11)
+After 12 'false alarm' verdicts:  deep JUNK    (+20 − 34 = −14)
 ```
 
-The rule sinks on its own, the reason is on the receipt, and you never edited
-a playbook. The penalty is the lower bound of a confidence interval on the
-rule's false-positive rate, not the raw rate — so one early "false alarm"
-moves the score immediately but conservatively, and the penalty firms up as
-more decisions come in. No arbitrary "wait for N observations" cliff.
+The penalty scales with the **lower bound of a Wilson confidence interval** on the false-positive rate — one early false-alarm barely moves the score, and the penalty firms up as more decisions come in. No arbitrary "wait for N observations" cliff.
 
-Once a (rule, target) pair has built up `NOISY_RULE_MIN_PER_ASSET` or more
-decisions of its own, the penalty is computed from that pair's track record
-instead of the rule's global one — a rule that's noisy on one box doesn't
-quiet down everywhere, and a rule that's reliable on a critical asset doesn't
-get dragged down by noise elsewhere. The receipt says which track record it
-used (e.g. *"...100%) on 'jump-host' — 57% confident..."*).
+Once a (rule, target) pair has `NOISY_RULE_MIN_PER_ASSET` or more of its own decisions, the penalty uses that pair's track record instead of the rule's global one — a rule noisy on one host doesn't quiet down everywhere.
 
-Separately, sift watches each rule's overall firing rate: if a rule suddenly
-fires `DRIFT_SPIKE_MULTIPLIER`x or more its own historical average within
-`DRIFT_WINDOW_HOURS`, that's a *Rule activity spike* (+10) — a behavioural
-change worth a second look, whether that's the rule turning noisy or a real
-incident causing a burst.
+### Cases
 
-#### Cases
-
-Related alerts pile up fast — the same compromised account tripping three
-different rules, or one host generating a dozen near-identical detections.
-[`/cases`](#how-it-works) groups alerts that share a source user, source IP,
-or target within the last `CASE_WINDOW_HOURS`, once at least `CASE_MIN_ALERTS`
-of them share that value, so an analyst triages one incident instead of N
-near-duplicates.
-
-A case rolls up to the most severe verdict among its members — one ESCALATE
-in the group makes the whole case ESCALATE — and its page reuses the same
-checkbox-driven bulk feedback as the dashboard, landing you back on the case
-once you've decided. A single alert can appear in more than one case (e.g.
-the same source IP *and* the same target), and snoozed or already-decided
-alerts still count: a case is the recent history of related activity, not
-just the open queue.
+Related alerts pile up fast — the same compromised account tripping three rules, or one host generating a dozen near-identical detections. `/cases` groups alerts that share a source user, source IP, or target within `CASE_WINDOW_HOURS`, once at least `CASE_MIN_ALERTS` share that value. The case rolls up to the highest verdict among its members; its page has the same bulk-feedback controls as the dashboard.
 
 ---
 
-### Wiring it to Wazuh
+## Supported sources
 
-Wazuh delivers alerts to custom integrations via a Python wrapper script. Here
-is the complete setup — it takes about five minutes.
+| Webhook route | What to send |
+|--------------|--------------|
+| `POST /webhook/wazuh` | Wazuh JSON alert (from a custom integration script — see [Wazuh setup](#wiring-to-wazuh)) |
+| `POST /webhook/suricata` | One Suricata `eve.json` line; non-`alert` event types are accepted but silently skipped |
+| `POST /webhook/elastic` | Elastic Common Schema (ECS) document — from Kibana's webhook connector, Beats, or Logstash |
+| `POST /webhook/guardduty` | AWS GuardDuty finding — from EventBridge or replayed from the console |
+| `POST /webhook/m365` | Microsoft Graph Security API alert — Defender for Endpoint, Identity, Cloud Apps, or Sentinel |
+| `POST /webhook/crowdstrike` | CrowdStrike Falcon `DetectionSummaryEvent` from the Event Streams API or a webhook |
+| `POST /webhook/osquery` | osquery differential result — from Fleet or the osquery logger |
+| `POST /webhook/generic` | Any JSON — map fields to sift's schema via `GENERIC_FIELD_MAP` in `config.py`, no Python required |
+
+Every source's severity is normalised onto sift's 0–15 scale, so all thresholds and signals work identically regardless of origin. The receipt's first line always explains the mapping, e.g. *"Suricata severity 1 (1=highest) → level 15 of 15"*.
+
+Try all sources locally:
+
+```bash
+python cli.py send sample_alerts/real_attack.json
+python cli.py send sample_alerts/suricata_alert.json
+python cli.py send sample_alerts/elastic_alert.json
+python cli.py send sample_alerts/guardduty_finding.json
+python cli.py send sample_alerts/m365_alert.json
+python cli.py send sample_alerts/crowdstrike_detection.json
+python cli.py send sample_alerts/osquery_result.json
+python cli.py send sample_alerts/generic_alert.json
+```
+
+`cli.py send` auto-detects the right endpoint from each file's shape.
+
+---
+
+## Wiring to Wazuh
+
+Wazuh delivers alerts to custom integrations via a Python wrapper script. Full setup in five minutes:
 
 **1. Create the integration script**
 
@@ -226,7 +227,6 @@ Save this as `/var/ossec/integrations/custom-sift` on the Wazuh manager:
 """Wazuh → sift integration. Place at /var/ossec/integrations/custom-sift."""
 import json, sys, urllib.request, urllib.error
 
-# Edit these two lines:
 SIFT_URL   = "http://YOUR_SIFT_HOST:8000/webhook/wazuh"
 SIFT_TOKEN = ""   # set to your SIFT_WEBHOOK_TOKEN if configured
 
@@ -252,16 +252,14 @@ if __name__ == "__main__":
 
 **2. Set permissions**
 
-Wazuh runs integrations as the `ossec` user:
-
 ```bash
 chmod 750 /var/ossec/integrations/custom-sift
 chown root:ossec /var/ossec/integrations/custom-sift
 ```
 
-**3. Add the integration block to `ossec.conf`**
+**3. Add to `ossec.conf`**
 
-Edit `/var/ossec/etc/ossec.conf` (on the manager) and add inside `<ossec_config>`:
+Inside `<ossec_config>` on the Wazuh manager:
 
 ```xml
 <integration>
@@ -272,105 +270,40 @@ Edit `/var/ossec/etc/ossec.conf` (on the manager) and add inside `<ossec_config>
 </integration>
 ```
 
-`<level>` sets the minimum Wazuh rule level to forward (3 = low, 12 = high).
-Leave it at 3 to let sift's own scoring decide what matters.
+`<level>3` forwards everything — let sift's scoring decide what matters.
 
-**4. Restart the Wazuh manager**
+**4. Restart**
 
 ```bash
 systemctl restart wazuh-manager
 ```
 
-**5. Test the integration**
-
-```bash
-# From the Wazuh manager, replay a sample alert:
-/var/ossec/integrations/custom-sift /var/ossec/logs/alerts/alerts.json
-# Expected output:
-# sift: alert #1 scored REVIEW (35)
-```
-
-Check sift's dashboard at `http://YOUR_SIFT_HOST:8000/` to see it appear.
-
 ---
 
-### Other sources
+## Enrichment (optional)
 
-sift normalises a few other formats out of the box, each on its own webhook
-route. Every route returns the same `{id, score, verdict, receipt}` JSON, and
-an `ESCALATE` verdict triggers the [outbound notification](#outbound-notifications-optional)
-just like a Wazuh alert.
-
-| Route | What to send |
-| --- | --- |
-| `POST /webhook/suricata` | One line of Suricata's `eve.json` (an `"event_type": "alert"` record). Other event types (flow, dns, http, ...) are accepted but skipped — point sift at the whole `eve.json` without flooding the queue. |
-| `POST /webhook/elastic` | An Elastic Common Schema (ECS) document — a Kibana detection alert via a webhook connector, or any ECS-shaped JSON from Beats/Elastic Agent/Logstash. |
-| `POST /webhook/guardduty` | An AWS GuardDuty finding (e.g. forwarded from EventBridge via a small Lambda, or replayed from the console's "View finding JSON"). |
-| `POST /webhook/m365` | A Microsoft Graph Security API alert (the `/security/alerts` shape) — e.g. forwarded from Defender for Endpoint, Defender for Identity, Defender for Cloud Apps, or Sentinel. |
-| `POST /webhook/generic` | Any JSON at all — fields are pulled out using the dotted paths in `config.GENERIC_FIELD_MAP`, no Python required. |
-
-Each source's severity is normalised onto sift's 0-15 scale (the same scale
-Wazuh rule levels use), so the *SIEM severity* signal and all the thresholds
-in [Configuration](#configuration) work identically no matter where an alert
-came from. The receipt's first line always says exactly how that mapping was
-done, e.g. `Suricata severity 1 (1=highest, 3=lowest) -> level 15 of 15` or
-`Elastic risk score 85/100 -> level 13 of 15`.
-
-Try any of them locally:
+Set API keys via environment variable or in a `.env` file (copy `.env.example` to get started):
 
 ```bash
-python3 send_sample.py sample_alerts/suricata_alert.json
-python3 send_sample.py sample_alerts/elastic_alert.json
-python3 send_sample.py sample_alerts/guardduty_finding.json
-python3 send_sample.py sample_alerts/m365_alert.json
-python3 send_sample.py sample_alerts/generic_alert.json
+ABUSEIPDB_KEY=...     # source-IP reputation (+50 on a hit)
+VIRUSTOTAL_KEY=...    # file-hash reputation (+50 on a hit)
 ```
 
-`send_sample.py` guesses the right endpoint from the JSON's shape, so all
-six sample files (including the three Wazuh ones) work with the same
-command.
+Lookups are cached in the database — the same IP or hash is never queried twice within its TTL.
 
-None of these match your tool? `POST` any JSON to `/webhook/generic` and map
-its fields in `config.GENERIC_FIELD_MAP` — or add a sibling `normalize_*`
-function to [`normalize.py`](normalize.py) for a first-class integration.
-Nothing downstream cares which source an alert came from.
+### Free threat-intel feeds (no key required)
 
----
+On by default. Checked against every incoming source IP:
 
-### Enrichment (optional)
+| Feed | What it blocks |
+|------|---------------|
+| [abuse.ch Feodo Tracker](https://feodotracker.abuse.ch/) | Known botnet C2 infrastructure |
+| [abuse.ch SSLBL](https://sslbl.abuse.ch/) | IPs serving malicious SSL certificates |
+| [Tor exit-node list](https://check.torproject.org/torbulkexitlist) | Known Tor exit nodes (scored lower — +15) |
 
-Set either key as an environment variable (or in a local `.env` file) to turn
-on reputation signals. Leave them unset and sift just skips those signals —
-it still works.
+Feeds are fetched over HTTPS and cached for `THREAT_FEED_REFRESH_HOURS` (default 12 h). If a feed is unreachable, sift falls back to the last cached copy — or skips the signal if it's never fetched one. Set `ENABLE_THREAT_FEEDS = False` in `config.py` to turn all feeds off.
 
-```bash
-export ABUSEIPDB_KEY=...      # source-IP reputation
-export VIRUSTOTAL_KEY=...     # file-hash reputation
-```
-
-Lookups are cached in the database so the same IP or hash is never queried
-twice.
-
-#### Threat-intel feeds (free, no key)
-
-Beyond those two keyed lookups, sift also checks every alert's source IP
-against a handful of free, keyless bulk IP blocklists — on by default,
-nothing to sign up for:
-
-- [abuse.ch Feodo Tracker](https://feodotracker.abuse.ch/) — known botnet C2 IPs
-- [abuse.ch SSLBL](https://sslbl.abuse.ch/) — IPs serving malicious SSL certificates
-- the [Tor exit-node list](https://check.torproject.org/torbulkexitlist) —
-  scored separately and lower (`tor_exit_node`), since Tor traffic isn't
-  inherently malicious
-
-Each feed is fetched over HTTPS and cached for `THREAT_FEED_REFRESH_HOURS`
-(default 12h); if a feed can't be reached, sift falls back to the last copy it
-fetched, or simply skips the signal if it's never fetched one. Set
-`ENABLE_THREAT_FEEDS = False` in `config.py` to turn all three off.
-
-For fully air-gapped use, point `SIFT_LOCAL_BLOCKLIST` at a local text file —
-one IP per line, `#` comments allowed — and sift checks every source IP
-against it too, no internet access required at all:
+For fully air-gapped use, point `SIFT_LOCAL_BLOCKLIST` at a local text file (one IP per line, `#` comments allowed):
 
 ```bash
 export SIFT_LOCAL_BLOCKLIST=/etc/sift/blocklist.txt
@@ -378,199 +311,175 @@ export SIFT_LOCAL_BLOCKLIST=/etc/sift/blocklist.txt
 
 ---
 
-### Outbound notifications (optional)
+## Outbound actions (optional)
 
-Set `ESCALATE_WEBHOOK_URL` (env var or `.env`) to a Slack, Mattermost, or
-Discord incoming-webhook URL and sift will POST a short summary there every
-time an alert is scored ESCALATE:
+All actions run on background threads with short timeouts — a slow or unreachable endpoint never blocks alert ingestion.
+
+### Chat webhook (Slack / Mattermost / Discord)
 
 ```bash
 export ESCALATE_WEBHOOK_URL=https://hooks.slack.com/services/...
 ```
 
+Posts a short summary for every ESCALATE verdict:
+
 ```
-sift ESCALATE -- alert #3 (score 93)
-Rule: 92052 -- Suspicious process execution consistent with credential dumping
+sift ESCALATE — alert #3 (score 93)
+Rule: 92052 — Credential dumping
 Target: dc01  Source: 45.146.165.37
 Top signals: SIEM severity (+48); Critical asset (+30); Outside business hours (+15)
 ```
 
-Each POST runs on its own background thread with a short timeout — a slow or
-unreachable endpoint never delays or breaks alert ingestion. Leave a setting
-unset and sift stays exactly as before.
-
-#### TheHive (optional)
-
-Set both `THEHIVE_URL` and `THEHIVE_API_KEY` (env var or `.env`) and sift
-will also create a TheHive alert for every ESCALATE verdict — title, the
-full receipt as the description, severity mapped from the score, and tags
-for the source and rule:
+### TheHive
 
 ```bash
 export THEHIVE_URL=https://thehive.example.org
 export THEHIVE_API_KEY=...
 ```
 
-The alert's `sourceRef` is sift's own alert id, so a TheHive analyst can
-trace it straight back to the receipt at `/alert/<id>`. This is additive to
-the chat webhook above — set one, the other, both, or neither.
+Creates a TheHive alert for every ESCALATE verdict, with the full receipt as the description and severity mapped from the score.
 
----
+### ServiceNow
 
-### Configuration
-
-Everything tunable is in [`config.py`](config.py), commented:
-
-- `JUNK_BELOW` / `ESCALATE_AT` — the two thresholds between the three buckets
-- `WEIGHTS` — how many points each signal is worth
-- `CRITICAL_ASSETS` — substrings that mark a target as critical
-- `ALLOWLIST_IPS` / `ALLOWLIST_USERS` / `ALLOWLIST_HASHES` — trusted IPs
-  (or CIDR ranges), usernames, and file hashes
-- `BUSINESS_START` / `BUSINESS_END` — your local business hours
-- `DUPLICATE_WINDOW_HOURS` / `DUPLICATE_FLOOD_COUNT` — duplicate-flood thresholds
-- `NOISY_RULE_CONFIDENCE_Z` — how conservatively the learning loop reads a
-  rule's false-positive track record
-- `NOISY_RULE_MIN_PER_ASSET` — how many analyst decisions a (rule, target)
-  pair needs before its own track record overrides the rule's global one
-- `VELOCITY_WINDOW_HOURS` / `VELOCITY_IP_THRESHOLD` — how many distinct
-  source IPs a user can alert from in how short a window before it looks
-  like impossible travel
-- `DRIFT_WINDOW_HOURS` / `DRIFT_SPIKE_MULTIPLIER` / `DRIFT_MIN_LIFETIME_ALERTS`
-  — how big a jump in a rule's firing rate counts as a "Rule activity spike"
-- `CASE_WINDOW_HOURS` / `CASE_MIN_ALERTS` — how recent and how many alerts
-  need to share a source user, source IP, or target before they're grouped
-  into a case on [`/cases`](#cases)
-- `ENABLE_THREAT_FEEDS` / `THREAT_FEED_REFRESH_HOURS` / `THREAT_FEEDS` — the
-  free bulk IP threat feeds and how often they're refreshed (see
-  [Enrichment](#enrichment-optional))
-- `LOCAL_BLOCKLIST_PATH` (env var `SIFT_LOCAL_BLOCKLIST`) — a local IP
-  blocklist file for fully air-gapped use
-- `GENERIC_FIELD_MAP` — dotted-path field mapping for `POST /webhook/generic`,
-  for wiring up a tool that doesn't have a dedicated normaliser
-  (see [Other sources](#other-sources))
-
-Edit, save, restart.
-
----
-
-### Project layout
-
-```
-sift.py          HTTP server + routing (entry point)
-config.py        all the dials you tune
-normalize.py     raw alert JSON (Wazuh, Suricata, Elastic, GuardDuty, M365/Graph, generic) -> flat internal alert
-checks.py        the signals — each returns one receipt line or nothing
-scorer.py        gather context, run checks, sum to a score + verdict
-enrich.py        optional AbuseIPDB / VirusTotal lookups + free bulk IP threat feeds
-notify.py        optional chat webhook on ESCALATE
-db.py            SQLite: alerts, per-rule track record, enrichment cache
-views.py         the dashboard, case views, and the receipt page
-send_sample.py   push an alert file at a running sift (guesses the endpoint)
-sample_alerts/   one alert per source — the three Wazuh ones cover JUNK/REVIEW/ESCALATE
+```bash
+export SERVICENOW_INSTANCE=https://dev12345.service-now.com
+export SERVICENOW_USER=sift-integration
+export SERVICENOW_PASSWORD=...
+export SERVICENOW_ASSIGNMENT_GROUP="Security Operations"   # optional
 ```
 
----
-
-### Roadmap
-
-v1 deliberately does one thing well: explainable, learning triage on top of a
-single SIEM. Every roadmap item is held to the same bar as v1: **no AI model,
-no third-party API, no ongoing cost** — sift's signals and learning loop are
-built entirely from data it already has (the alert itself and its own
-history), so it works identically on an air-gapped box as it does online.
-That's also sift's answer to the wave of "AI SOC analyst" products: explainable
-and free to run, not a closed box with a per-alert bill. Natural next steps,
-roughly in order:
-
-> **v1.1** landed all four items below in one pass: M365/Microsoft Graph as a
-> source, the source-IP velocity signal, TheHive as an outbound action, and
-> per-asset noisy-rule tuning with rule-drift alerts. The "Still open" notes
-> in each bullet are the candidates for v1.2.
-
-- **Bulk actions & queue ergonomics** — the dashboard has a search box (filter
-  by rule, target, source IP, or user, combinable with the verdict chips), an
-  age filter ("older than 1h/24h/7d"), per-alert snooze (hide it from the
-  queue for a while, with a one-click "wake now"), checkbox-driven bulk
-  feedback (select rows, mark them all real/false in one click — the learning
-  loop catches up on a noisy rule immediately), and keyboard-driven triage
-  (`j`/`k` to move through the queue, `t`/`f` to decide an alert and
-  auto-advance to the next one in the same filter).
-- **More signals** — identity context (a user alerting from a source IP sift
-  has never seen them use before), source-IP velocity (impossible travel,
-  derived from sift's own history — no GeoIP database needed), allowlists for
-  users/hashes, and free bulk threat-intel feeds (abuse.ch Feodo
-  Tracker/SSLBL, the Tor exit-node list, and a local blocklist for air-gapped
-  use) are in.
-- **More sources** — Suricata, Elastic/ECS, AWS GuardDuty, M365/Microsoft
-  Graph security alerts, and a config-driven generic JSON mapper are in (see
-  [Other sources](#other-sources)). Still open: CrowdStrike, osquery
-  ([milestone v1.4](#milestones)).
-- **Outbound actions** — sift can POST a short summary to a Slack/Mattermost/
-  Discord webhook, and/or create a TheHive alert with the full receipt, on
-  ESCALATE (see [Outbound notifications](#outbound-notifications-optional)).
-  These are notifications, not automation — sift never acts on an asset
-  itself, keeping a human in the loop for anything destructive. Still open:
-  other ticketing systems (Jira, ServiceNow) ([milestone v1.5](#milestones)).
-- **Smarter noisy-rule modelling** — the penalty scales with a Wilson
-  confidence interval on the track record, scoped per-asset once a (rule,
-  target) pair has its own decisions, and a rule firing well above its own
-  historical average is flagged as a "Rule activity spike" (see
-  [the learning loop](#the-learning-loop)).
-
-### Milestones
-
-> **v1.2** and **v1.3** have landed: alert correlation / [case view](#cases)
-> (`/cases`, `/case/<dim>/<value>`) and free bulk threat-intel IP feeds (see
-> [Enrichment](#enrichment-optional)). v1.4-v1.6 below are next, roughly in
-> priority order.
-
-Each milestone is held to the same bar as v1/v1.1: **no AI model, no
-third-party API, no ongoing cost**. Self-hosted infrastructure you already
-run (TheHive, Jira, ServiceNow) is fair game, the same way the Slack/Discord
-webhook is — sift talks to it, but never depends on it being there.
-
-- ~~**v1.2 — Alert correlation / case view.**~~ Shipped. Alerts that share an
-  actor (user or source IP) or asset within `CASE_WINDOW_HOURS` are grouped
-  into a *case* once `CASE_MIN_ALERTS` of them share that value, so an analyst
-  triages one incident instead of N near-duplicate alerts from the same root
-  cause. Each alert keeps its own receipt; the case rolls them up under the
-  highest verdict among its members. See [Cases](#cases).
-- ~~**v1.3 — More threat-intel feeds.**~~ Shipped. Beyond AbuseIPDB/
-  VirusTotal: free, keyless bulk IP blocklists — abuse.ch Feodo Tracker
-  (botnet C2) and SSLBL (malicious SSL certificate IPs), the Tor exit-node
-  list, and a local CSV/text blocklist for fully air-gapped use — each cached
-  in `enrich_cache` and refreshed every `THREAT_FEED_REFRESH_HOURS`. A feed
-  hit adds `threat_feed_ip` (+50); a Tor exit-node hit is scored separately
-  and lower (`tor_exit_node`, +15), since Tor traffic isn't inherently
-  malicious. See [Threat-intel feeds](#threat-intel-feeds-free-no-key).
-- **v1.4 — CrowdStrike & osquery sources.** Two more normalizers
-  (`normalize_crowdstrike`, `normalize_osquery`) following the existing
-  pattern, closing out the "More sources" still-open list.
-- **v1.5 — Jira & ServiceNow outbound actions.** Extend the TheHive pattern in
-  `notify.py` to create a Jira issue and/or a ServiceNow incident on ESCALATE,
-  with the receipt as the description — still notifications, not automation.
-- **v1.6 — Authentication, roles & audit trail.** A minimal stdlib-only login
-  (hashlib/secrets-based sessions, no external identity provider) so every
-  verdict records *who* decided it — the missing piece for multi-analyst
-  teams sharing one sift instance.
-
-Contributions welcome — the codebase is small on purpose so a new signal or a
-new SIEM is an afternoon, not a project.
+Opens a ServiceNow incident for every ESCALATE verdict. Urgency maps from the score (≥ 100 → Critical, ≥ 80 → High, else → Medium).
 
 ---
 
-### Honest limitations
+## Configuration
 
-- This is **triage, not detection**. sift prioritises the alerts your SIEM
-  already produces; it doesn't find new ones.
-- The scoring is intentionally simple and rule-based. That's a feature (every
-  decision is auditable), but it means quality depends on good weights and an
-  active feedback habit.
-- A `JUNK` verdict auto-*closes*, it never *deletes* — every alert and its
-  receipt is retained, so a wrong auto-close is always recoverable and
-  reviewable. Set your thresholds conservatively until you trust it.
-- SQLite and a threaded standard-library server are great for a team's volume,
-  not for a global MSSP firehose. The roadmap notes where you'd grow out of it.
+Everything tunable is in [`config.py`](config.py). The main dials:
+
+| Setting | Default | What it does |
+|---------|---------|--------------|
+| `JUNK_BELOW` | 20 | Score below this → JUNK |
+| `ESCALATE_AT` | 60 | Score at or above this → ESCALATE |
+| `WEIGHTS` | *(dict)* | Points per signal — the primary tuning surface |
+| `CRITICAL_ASSETS` | *(list)* | Substrings matched against alert target |
+| `ALLOWLIST_IPS` | *(list)* | Trusted IPs or CIDR ranges |
+| `ALLOWLIST_USERS` | *(list)* | Trusted usernames (e.g. service accounts) |
+| `ALLOWLIST_HASHES` | *(list)* | Trusted file hashes (e.g. internal tools) |
+| `BUSINESS_START/END` | 8, 18 | Local business hours (24-h clock) |
+| `CASE_WINDOW_HOURS` | 4 | How recent alerts must be to group into a case |
+| `CASE_MIN_ALERTS` | 2 | Minimum alerts sharing a field to form a case |
+| `VELOCITY_WINDOW_HOURS` | 1 | Window for impossible-travel IP-count check |
+| `VELOCITY_IP_THRESHOLD` | 3 | Distinct source IPs in that window → flag |
+| `NOISY_RULE_CONFIDENCE_Z` | 1.96 | Wilson interval z-score (higher = slower to penalise) |
+| `NOISY_RULE_MIN_PER_ASSET` | 3 | Decisions before per-asset track record kicks in |
+| `ENABLE_THREAT_FEEDS` | True | Toggle all bulk IP feed checks |
+| `THREAT_FEED_REFRESH_HOURS` | 12 | How often to re-fetch feeds |
+| `GENERIC_FIELD_MAP` | *(dict)* | Dotted-path field map for `/webhook/generic` |
+| `SESSION_MAX_HOURS` | 24 | Login session TTL (`SIFT_SESSION_HOURS` env var) |
+
+Edit `config.py`, save, restart sift.
+
+---
+
+## Project layout
+
+```
+sift.py                    thin launcher (python sift.py or python -m sift)
+cli.py                     CLI: serve / send / init-db / init-user / export / reset-demo
+config.py                  every tuning dial and optional integration key
+notify.py                  outbound: Slack/Discord chat webhook, TheHive, ServiceNow
+send_sample.py             legacy helper (cli.py send is preferred)
+
+sift/
+  server.py                ThreadingHTTPServer setup, main()
+  routes.py                Handler class, do_GET / do_POST routing, auth helpers
+  __main__.py              python -m sift entry point
+
+  core/
+    normalize.py           raw alert JSON → flat internal dict (8 source formats)
+    checks.py              individual signals — each returns one receipt line or nothing
+    scorer.py              gather context, run checks, sum to score + verdict
+    enrich.py              AbuseIPDB / VirusTotal lookups + free bulk IP threat feeds
+
+  storage/
+    db.py                  SQLite: alerts, rule stats, enrichment cache, users, sessions
+
+  ui/
+    views.py               dashboard, alert detail, cases, login page
+
+  handlers/
+    dashboard.py           GET /  /alert/<id>  /cases  /case/<dim>/<val>
+    webhooks.py            POST /webhook/<source>
+    feedback.py            POST /feedback  /snooze  /unsnooze  /bulk-feedback  /login  /logout
+
+tests/
+  test_normalize_wazuh.py     17 normalizer tests
+  test_normalize_suricata.py  35 normalizer tests (Suricata + CrowdStrike + osquery)
+  test_checks.py              26 signal / scoring unit tests
+  test_scorer.py              14 scorer integration tests
+  test_db_feedback.py         16 database feedback / audit-log tests
+  test_webhook_ingest.py      12 end-to-end HTTP round-trip tests
+
+sample_alerts/             one JSON file per source, covers JUNK / REVIEW / ESCALATE
+docs/
+  screenshots/             SVG UI mockups (regenerate with python docs/make_screenshots.py)
+```
+
+---
+
+## Development
+
+**Run the tests**
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+107 tests, zero external dependencies, runs in under 3 seconds. The CI matrix covers Python 3.10, 3.11, and 3.12.
+
+**Regenerate screenshots**
+
+```bash
+python docs/make_screenshots.py
+```
+
+**Add a new source**
+
+1. Add a `normalize_<source>(raw)` function to `sift/core/normalize.py` — return `None` to skip, or a flat dict with the standard keys.
+2. Add the normalizer to `WEBHOOK_NORMALIZERS` in `sift/handlers/webhooks.py`.
+3. Add a sample alert to `sample_alerts/`.
+4. Add test cases to `tests/test_normalize_suricata.py` (or a new test file).
+
+Nothing else needs to know which source an alert came from.
+
+---
+
+## Honest limitations
+
+- **Triage, not detection.** sift prioritises alerts your SIEM already produces; it doesn't find new ones.
+- **Intentionally simple scoring.** Rule-based and fully auditable — but quality depends on good weights and an active feedback habit.
+- **JUNK closes, never deletes.** Every alert and its receipt is retained, so a wrong auto-close is always recoverable.
+- **SQLite + stdlib HTTP.** Fine for a team's volume. Not designed for a global MSSP firehose.
+
+---
+
+## Roadmap
+
+Every milestone is held to the same bar: **no AI model, no third-party API required, no ongoing cost**. Self-hosted infrastructure you already run (TheHive, ServiceNow) is fair game; sift talks to it, never depends on it.
+
+| Version | Feature | Status |
+|---------|---------|--------|
+| v1.0 | Core: scoring engine, Wazuh, learning loop, Slack webhook | ✅ Shipped |
+| v1.1 | M365/Graph source, IP velocity, TheHive, per-asset noisy-rule | ✅ Shipped |
+| v1.2 | Alert correlation / cases view | ✅ Shipped |
+| v1.3 | Free bulk threat-intel feeds (Feodo Tracker, SSLBL, Tor) | ✅ Shipped |
+| v1.4 | CrowdStrike + osquery sources, auth + roles, package split, CI, Docker, ServiceNow | ✅ Shipped |
+| v1.5 | Metrics dashboard (alert volume over time, top noisy rules, FP rate trends) | Planned |
+| v1.6 | MITRE ATT&CK technique tagging on receipt lines | Planned |
+
+Contributions welcome — the codebase is small on purpose so a new signal or a new source is an afternoon, not a project.
+
+---
 
 ## License
 
