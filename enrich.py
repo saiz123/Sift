@@ -23,6 +23,7 @@ again before it's due to be refreshed.
 import datetime as dt
 import ipaddress
 import json
+import sys
 import urllib.request
 import urllib.parse
 
@@ -47,7 +48,12 @@ def check_ip(ip):
         return None
 
     cache_key = f"ip:{ip}"
-    cached = db.cache_get(cache_key)
+
+    # Short-TTL negative sentinel: skip if a recent lookup failed.
+    if db.cache_get(f"neg:{cache_key}", max_age_hours=config.ENRICH_NEGATIVE_CACHE_TTL_HOURS) is not None:
+        return None
+
+    cached = db.cache_get(cache_key, max_age_hours=config.ENRICH_CACHE_IP_TTL_HOURS)
     if cached is not None:
         return cached
 
@@ -64,7 +70,9 @@ def check_ip(ip):
             "abuse_score": int(data.get("abuseConfidenceScore", 0)),
             "reports": int(data.get("totalReports", 0)),
         }
-    except Exception:
+    except Exception as exc:
+        print(f"  [enrich] AbuseIPDB lookup for {ip} failed: {exc!r}", file=sys.stderr)
+        db.cache_set(f"neg:{cache_key}", {"_negative": True})
         return None
 
     db.cache_set(cache_key, result)
@@ -116,7 +124,8 @@ def _feed_ip_set(name, url):
 
     try:
         ips = _parse_ip_list(_fetch_lines(url))
-    except Exception:
+    except Exception as exc:
+        print(f"  [enrich] threat feed '{name}' fetch failed: {exc!r}", file=sys.stderr)
         return set(cached["ips"]) if cached else set()
 
     db.cache_set(cache_key, {
@@ -168,7 +177,12 @@ def check_hash(file_hash):
         return None
 
     cache_key = f"hash:{file_hash}"
-    cached = db.cache_get(cache_key)
+
+    # Short-TTL negative sentinel: skip if a recent lookup failed.
+    if db.cache_get(f"neg:{cache_key}", max_age_hours=config.ENRICH_NEGATIVE_CACHE_TTL_HOURS) is not None:
+        return None
+
+    cached = db.cache_get(cache_key, max_age_hours=config.ENRICH_CACHE_HASH_TTL_HOURS)
     if cached is not None:
         return cached
 
@@ -183,7 +197,9 @@ def check_hash(file_hash):
         malicious = int(stats.get("malicious", 0))
         total = sum(int(v) for v in stats.values()) if stats else 0
         result = {"malicious": malicious, "total": total}
-    except Exception:
+    except Exception as exc:
+        print(f"  [enrich] VirusTotal lookup for {file_hash} failed: {exc!r}", file=sys.stderr)
+        db.cache_set(f"neg:{cache_key}", {"_negative": True})
         return None
 
     db.cache_set(cache_key, result)

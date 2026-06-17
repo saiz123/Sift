@@ -14,6 +14,7 @@ alert ingestion.
 """
 
 import json
+import sys
 import threading
 import urllib.error
 import urllib.request
@@ -33,13 +34,19 @@ def notify_escalation(alert_id, alert, score, receipt):
         ).start()
 
 
+def _slack_escape(s):
+    """Prevent Slack mrkdwn injection: <!channel>, <URL|label>, @mentions."""
+    s = str(s) if s else ""
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def _format_message(alert_id, alert, score, receipt):
     top = sorted(receipt, key=lambda line: -line["points"])[:3]
     signals = "; ".join(f"{line['label']} ({line['points']:+d})" for line in top)
     return (
         f"sift ESCALATE -- alert #{alert_id} (score {score})\n"
-        f"Rule: {alert.get('rule_id') or '?'} -- {alert.get('rule_desc') or ''}\n"
-        f"Target: {alert.get('target') or '-'}  Source: {alert.get('src_ip') or '-'}\n"
+        f"Rule: {_slack_escape(alert.get('rule_id') or '?')} -- {_slack_escape(alert.get('rule_desc') or '')}\n"
+        f"Target: {_slack_escape(alert.get('target') or '-')}  Source: {_slack_escape(alert.get('src_ip') or '-')}\n"
         f"Top signals: {signals or 'none'}"
     )
 
@@ -53,8 +60,8 @@ def _post_chat(url, text):
     )
     try:
         urllib.request.urlopen(req, timeout=5)
-    except (urllib.error.URLError, OSError):
-        pass
+    except Exception as exc:
+        print(f"  [notify] chat webhook failed: {exc!r}", file=sys.stderr)
 
 
 def _thehive_severity(score):
@@ -82,6 +89,8 @@ def _thehive_description(alert_id, alert, score, receipt):
 
 
 def _post_thehive(alert_id, alert, score, receipt):
+    if not config.THEHIVE_URL.startswith("https://"):
+        print("  [notify] warning: THEHIVE_URL is not https — API token sent in cleartext", file=sys.stderr)
     tags = ["sift"]
     if alert.get("source"):
         tags.append(f"source:{alert['source']}")
@@ -109,5 +118,5 @@ def _post_thehive(alert_id, alert, score, receipt):
     )
     try:
         urllib.request.urlopen(req, timeout=5)
-    except (urllib.error.URLError, OSError):
-        pass
+    except Exception as exc:
+        print(f"  [notify] TheHive create-alert failed: {exc!r}", file=sys.stderr)

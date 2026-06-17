@@ -224,6 +224,7 @@ GENERIC_FIELD_MAP = {
 HOST = os.environ.get("SIFT_HOST", "127.0.0.1")
 PORT = int(os.environ.get("SIFT_PORT", "8000"))
 DB_PATH = os.environ.get("SIFT_DB", "sift.db")
+MAX_BODY_BYTES = 1 << 20  # 1 MB webhook body cap
 
 # ---------------------------------------------------------------------------
 # Optional enrichment API keys. Leave unset and sift simply skips those
@@ -268,6 +269,12 @@ VIRUSTOTAL_KEY = os.environ.get("VIRUSTOTAL_KEY", "")
 # ---------------------------------------------------------------------------
 ENABLE_THREAT_FEEDS = True
 THREAT_FEED_REFRESH_HOURS = 12
+
+# How long to cache a successful keyed enrichment result before re-checking.
+ENRICH_CACHE_IP_TTL_HOURS = 24
+ENRICH_CACHE_HASH_TTL_HOURS = 168  # 7 days — file reputations change slowly
+# How long to wait before retrying a failed (network/API) enrichment lookup.
+ENRICH_NEGATIVE_CACHE_TTL_HOURS = 1
 
 THREAT_FEEDS = {
     "feodotracker": "https://feodotracker.abuse.ch/downloads/ipblocklist.txt",

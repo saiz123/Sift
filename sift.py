@@ -29,6 +29,8 @@ Pure Python standard library — no pip install, nothing to pull from a CDN.
 import datetime as dt
 import json
 import re
+import sys
+import threading
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -44,7 +46,7 @@ from normalize import (
     normalize_suricata,
     normalize_wazuh,
 )
-from scorer import score_alert
+from scorer import enrich_and_rescore, score_alert
 
 
 WEBHOOK_NORMALIZERS = {
@@ -102,6 +104,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(payload)))
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(payload)
@@ -116,6 +120,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _read_body(self):
         length = int(self.headers.get("Content-Length", 0) or 0)
+        if length > config.MAX_BODY_BYTES:
+            return None  # caller should return 413
         return self.rfile.read(length) if length else b""
 
     # --- routing ----------------------------------------------------------
@@ -195,19 +201,34 @@ class Handler(BaseHTTPRequestHandler):
 
     # --- actions ----------------------------------------------------------
     def _ingest(self, normalize_fn):
+        body = self._read_body()
+        if body is None:
+            return self._send_json(413, {"error": "request body too large"})
         try:
-            raw = json.loads(self._read_body().decode("utf-8"))
+            raw = json.loads(body.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
             return self._send_json(400, {"error": "body must be valid JSON"})
 
-        alert = normalize_fn(raw)
-        if alert is None:
-            return self._send_json(200, {"status": "skipped"})
+        try:
+            alert = normalize_fn(raw)
+            if alert is None:
+                return self._send_json(200, {"status": "skipped"})
 
-        score, verdict, receipt = score_alert(alert)
-        alert_id = db.insert_alert(alert, score, verdict, receipt)
+            score, verdict, receipt = score_alert(alert)
+            alert_id = db.insert_alert(alert, score, verdict, receipt)
+        except Exception as exc:
+            print(f"  [ingest] normalize/score/insert failed: {exc!r}", file=sys.stderr)
+            return self._send_json(500, {"error": "ingest failed"})
+
         if verdict == "ESCALATE":
             notify.notify_escalation(alert_id, alert, score, receipt)
+
+        threading.Thread(
+            target=enrich_and_rescore,
+            args=(alert_id, alert, verdict),
+            daemon=True,
+        ).start()
+
         return self._send_json(200, {
             "id": alert_id,
             "score": score,
@@ -216,7 +237,10 @@ class Handler(BaseHTTPRequestHandler):
         })
 
     def _feedback(self, alert_id):
-        form = urllib.parse.parse_qs(self._read_body().decode("utf-8"))
+        body = self._read_body()
+        if body is None:
+            return self._send_json(413, {"error": "request body too large"})
+        form = urllib.parse.parse_qs(body.decode("utf-8"))
         verdict = form.get("verdict", [""])[0]
         if verdict not in ("true_positive", "false_positive"):
             return self._send_json(400, {"error": "verdict must be true_positive or false_positive"})
@@ -231,7 +255,10 @@ class Handler(BaseHTTPRequestHandler):
         return self._redirect(f"/{suffix}")
 
     def _snooze(self, alert_id):
-        form = urllib.parse.parse_qs(self._read_body().decode("utf-8"))
+        body = self._read_body()
+        if body is None:
+            return self._send_json(413, {"error": "request body too large"})
+        form = urllib.parse.parse_qs(body.decode("utf-8"))
         try:
             hours = float(form.get("hours", [""])[0])
         except ValueError:
@@ -246,7 +273,10 @@ class Handler(BaseHTTPRequestHandler):
         return self._redirect(f"/alert/{alert_id}{suffix}")
 
     def _unsnooze(self, alert_id):
-        form = urllib.parse.parse_qs(self._read_body().decode("utf-8"))
+        body = self._read_body()
+        if body is None:
+            return self._send_json(413, {"error": "request body too large"})
+        form = urllib.parse.parse_qs(body.decode("utf-8"))
         if not db.unsnooze_alert(alert_id):
             return self._send_json(404, {"error": "no such alert"})
         from_qs = form.get("from", [""])[0]
@@ -254,7 +284,10 @@ class Handler(BaseHTTPRequestHandler):
         return self._redirect(f"/alert/{alert_id}{suffix}")
 
     def _bulk_feedback(self):
-        form = urllib.parse.parse_qs(self._read_body().decode("utf-8"))
+        body = self._read_body()
+        if body is None:
+            return self._send_json(413, {"error": "request body too large"})
+        form = urllib.parse.parse_qs(body.decode("utf-8"))
         verdict = form.get("analyst_verdict", [""])[0]
         if verdict not in ("true_positive", "false_positive"):
             return self._send_json(400, {"error": "analyst_verdict must be true_positive or false_positive"})
@@ -291,6 +324,8 @@ def main():
     if config.LOCAL_BLOCKLIST_PATH:
         keys.append("local blocklist")
     print(f"  enrichment: {', '.join(keys) if keys else 'off (no API keys set — that is fine)'}")
+    if config.THEHIVE_URL and not config.THEHIVE_URL.startswith("https://"):
+        print("  WARNING: THEHIVE_URL is not https — API token will be sent in cleartext\n")
     print("  Ctrl-C to stop\n")
     try:
         server.serve_forever()

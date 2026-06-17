@@ -10,6 +10,7 @@ Three tables:
                 same IP or hash and burn through rate limits.
 """
 
+import contextlib
 import json
 import sqlite3
 import datetime as dt
@@ -21,11 +22,23 @@ def connect():
     conn = sqlite3.connect(config.DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     return conn
 
 
+@contextlib.contextmanager
+def _db():
+    """Open a connection, manage the transaction, and guarantee close."""
+    conn = connect()
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
+
+
 def init_db():
-    with connect() as conn:
+    with _db() as conn:
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS alerts (
@@ -84,7 +97,7 @@ def _now():
 # --- alerts ---------------------------------------------------------------
 
 def insert_alert(alert, score, verdict, receipt):
-    with connect() as conn:
+    with _db() as conn:
         cur = conn.execute(
             """
             INSERT INTO alerts (received_at, source, rule_id, rule_desc, rule_level,
@@ -112,7 +125,7 @@ def insert_alert(alert, score, verdict, receipt):
 
 
 def get_alert(alert_id):
-    with connect() as conn:
+    with _db() as conn:
         row = conn.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,)).fetchone()
         return dict(row) if row else None
 
@@ -148,7 +161,7 @@ def _alert_filters(verdict_filter, q, snoozed, min_age_hours):
 def list_alerts(verdict_filter=None, q=None, snoozed=False, min_age_hours=None, limit=200):
     clauses, params = _alert_filters(verdict_filter, q, snoozed, min_age_hours)
     query = "SELECT * FROM alerts WHERE " + " AND ".join(clauses) + " ORDER BY id DESC LIMIT ?"
-    with connect() as conn:
+    with _db() as conn:
         return [dict(r) for r in conn.execute(query, params + [limit]).fetchall()]
 
 
@@ -156,14 +169,14 @@ def list_alert_ids(verdict_filter=None, q=None, snoozed=False, min_age_hours=Non
     """Ordered alert ids for the same filter as list_alerts — used for prev/next navigation."""
     clauses, params = _alert_filters(verdict_filter, q, snoozed, min_age_hours)
     query = "SELECT id FROM alerts WHERE " + " AND ".join(clauses) + " ORDER BY id DESC LIMIT ?"
-    with connect() as conn:
+    with _db() as conn:
         return [r["id"] for r in conn.execute(query, params + [limit]).fetchall()]
 
 
 def verdict_counts():
     """Counts for the chips — excludes alerts currently snoozed out of the queue."""
     now = _now()
-    with connect() as conn:
+    with _db() as conn:
         rows = conn.execute(
             "SELECT verdict, COUNT(*) AS n FROM alerts"
             " WHERE snoozed_until IS NULL OR snoozed_until <= ?"
@@ -180,7 +193,7 @@ def verdict_counts():
 
 def snoozed_count():
     now = _now()
-    with connect() as conn:
+    with _db() as conn:
         row = conn.execute(
             "SELECT COUNT(*) AS n FROM alerts WHERE snoozed_until IS NOT NULL AND snoozed_until > ?",
             (now,),
@@ -189,7 +202,7 @@ def snoozed_count():
 
 
 def snooze_alert(alert_id, until_iso):
-    with connect() as conn:
+    with _db() as conn:
         cur = conn.execute(
             "UPDATE alerts SET snoozed_until = ? WHERE id = ?", (until_iso, alert_id)
         )
@@ -197,7 +210,7 @@ def snooze_alert(alert_id, until_iso):
 
 
 def unsnooze_alert(alert_id):
-    with connect() as conn:
+    with _db() as conn:
         cur = conn.execute(
             "UPDATE alerts SET snoozed_until = NULL WHERE id = ?", (alert_id,)
         )
@@ -211,7 +224,7 @@ def count_recent_duplicates(rule_id, src_ip, window_hours):
     cutoff = (
         dt.datetime.now() - dt.timedelta(hours=window_hours)
     ).isoformat(timespec="seconds")
-    with connect() as conn:
+    with _db() as conn:
         row = conn.execute(
             """
             SELECT COUNT(*) AS n FROM alerts
@@ -232,7 +245,7 @@ def recent_distinct_source_ips(src_user, window_hours):
     cutoff = (
         dt.datetime.now() - dt.timedelta(hours=window_hours)
     ).isoformat(timespec="seconds")
-    with connect() as conn:
+    with _db() as conn:
         rows = conn.execute(
             """
             SELECT DISTINCT src_ip FROM alerts
@@ -250,7 +263,7 @@ def user_source_history(src_user, src_ip):
     """
     if not src_user:
         return {"total": 0, "seen_this_ip": False}
-    with connect() as conn:
+    with _db() as conn:
         total = conn.execute(
             "SELECT COUNT(*) AS n FROM alerts WHERE src_user = ?", (src_user,)
         ).fetchone()["n"]
@@ -288,45 +301,57 @@ def record_feedback(alert_id, analyst_verdict):
     asset. Re-deciding an alert adjusts the tally correctly instead of
     double-counting.
     """
-    assert analyst_verdict in ("true_positive", "false_positive")
-    with connect() as conn:
-        row = conn.execute(
-            "SELECT rule_id, target, analyst_verdict FROM alerts WHERE id = ?", (alert_id,)
-        ).fetchone()
-        if row is None:
-            return False
-        rule_id = row["rule_id"]
-        target = row["target"]
-        previous = row["analyst_verdict"]
+    if analyst_verdict not in ("true_positive", "false_positive"):
+        raise ValueError(f"analyst_verdict must be 'true_positive' or 'false_positive', got {analyst_verdict!r}")
 
-        conn.execute(
-            "UPDATE alerts SET analyst_verdict = ?, decided_at = ? WHERE id = ?",
-            (analyst_verdict, _now(), alert_id),
-        )
+    # BEGIN IMMEDIATE so the read-then-write on rule_stats can't race with
+    # another concurrent feedback submission — writers wait (busy_timeout)
+    # rather than failing with SQLITE_BUSY.
+    with contextlib.closing(connect()) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute(
+                "SELECT rule_id, target, analyst_verdict FROM alerts WHERE id = ?", (alert_id,)
+            ).fetchone()
+            if row is None:
+                conn.rollback()
+                return False
+            rule_id = row["rule_id"]
+            target = row["target"]
+            previous = row["analyst_verdict"]
 
-        if rule_id:
             conn.execute(
-                "INSERT OR IGNORE INTO rule_stats (rule_id, total, fp) VALUES (?,0,0)",
-                (rule_id,),
+                "UPDATE alerts SET analyst_verdict = ?, decided_at = ? WHERE id = ?",
+                (analyst_verdict, _now(), alert_id),
             )
-            _adjust_stats(conn, "rule_stats", "rule_id = ?", (rule_id,), previous, analyst_verdict)
 
-            if target:
+            if rule_id:
                 conn.execute(
-                    "INSERT OR IGNORE INTO rule_target_stats (rule_id, target, total, fp) VALUES (?,?,0,0)",
-                    (rule_id, target),
+                    "INSERT OR IGNORE INTO rule_stats (rule_id, total, fp) VALUES (?,0,0)",
+                    (rule_id,),
                 )
-                _adjust_stats(
-                    conn, "rule_target_stats", "rule_id = ? AND target = ?",
-                    (rule_id, target), previous, analyst_verdict,
-                )
+                _adjust_stats(conn, "rule_stats", "rule_id = ?", (rule_id,), previous, analyst_verdict)
+
+                if target:
+                    conn.execute(
+                        "INSERT OR IGNORE INTO rule_target_stats (rule_id, target, total, fp) VALUES (?,?,0,0)",
+                        (rule_id, target),
+                    )
+                    _adjust_stats(
+                        conn, "rule_target_stats", "rule_id = ? AND target = ?",
+                        (rule_id, target), previous, analyst_verdict,
+                    )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
     return True
 
 
 def get_rule_stats(rule_id):
     if not rule_id:
         return None
-    with connect() as conn:
+    with _db() as conn:
         row = conn.execute(
             "SELECT total, fp FROM rule_stats WHERE rule_id = ?", (rule_id,)
         ).fetchone()
@@ -337,7 +362,7 @@ def get_rule_target_stats(rule_id, target):
     """Per-asset track record for this rule — feeds per-asset noisy-rule tuning."""
     if not rule_id or not target:
         return None
-    with connect() as conn:
+    with _db() as conn:
         row = conn.execute(
             "SELECT total, fp FROM rule_target_stats WHERE rule_id = ? AND target = ?",
             (rule_id, target),
@@ -355,7 +380,7 @@ def rule_activity_stats(rule_id, window_hours):
     cutoff = (
         dt.datetime.now() - dt.timedelta(hours=window_hours)
     ).isoformat(timespec="seconds")
-    with connect() as conn:
+    with _db() as conn:
         row = conn.execute(
             """
             SELECT COUNT(*) AS total, MIN(received_at) AS first_seen,
@@ -388,7 +413,7 @@ def list_cases(window_hours, min_alerts):
     """
     cutoff = (dt.datetime.now() - dt.timedelta(hours=window_hours)).isoformat(timespec="seconds")
     cases = []
-    with connect() as conn:
+    with _db() as conn:
         for dimension, column in _CASE_DIMENSIONS:
             rows = conn.execute(
                 f"""
@@ -432,7 +457,7 @@ def list_case_alerts(dimension, value, window_hours):
     if column is None:
         return []
     cutoff = (dt.datetime.now() - dt.timedelta(hours=window_hours)).isoformat(timespec="seconds")
-    with connect() as conn:
+    with _db() as conn:
         rows = conn.execute(
             f"SELECT * FROM alerts WHERE {column} = ? AND received_at >= ? ORDER BY id DESC",
             (value, cutoff),
@@ -442,16 +467,32 @@ def list_case_alerts(dimension, value, window_hours):
 
 # --- enrichment cache -----------------------------------------------------
 
-def cache_get(key):
-    with connect() as conn:
-        row = conn.execute(
-            "SELECT value_json FROM enrich_cache WHERE cache_key = ?", (key,)
-        ).fetchone()
+def cache_get(key, max_age_hours=None):
+    with _db() as conn:
+        if max_age_hours is not None:
+            cutoff = (dt.datetime.now() - dt.timedelta(hours=max_age_hours)).isoformat(timespec="seconds")
+            row = conn.execute(
+                "SELECT value_json FROM enrich_cache WHERE cache_key = ? AND cached_at >= ?",
+                (key, cutoff),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT value_json FROM enrich_cache WHERE cache_key = ?", (key,)
+            ).fetchone()
     return json.loads(row["value_json"]) if row else None
 
 
+def update_alert_score(alert_id, score, verdict, receipt):
+    """Update score/verdict/receipt after background enrichment re-scores the alert."""
+    with _db() as conn:
+        conn.execute(
+            "UPDATE alerts SET score = ?, verdict = ?, receipt_json = ? WHERE id = ?",
+            (score, verdict, json.dumps(receipt), alert_id),
+        )
+
+
 def cache_set(key, value):
-    with connect() as conn:
+    with _db() as conn:
         conn.execute(
             """
             INSERT INTO enrich_cache (cache_key, value_json, cached_at)

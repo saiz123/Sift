@@ -59,6 +59,15 @@ def _first_of(items):
     return {}
 
 
+def _to_str(v):
+    """Coerce a scalar to str, or return None for dict/list — prevents SQLite bind errors."""
+    if v is None:
+        return None
+    if isinstance(v, (dict, list)):
+        return None
+    return str(v)
+
+
 def _clamp_level(value):
     """Round to the nearest int and clamp onto sift's 0-15 severity scale."""
     try:
@@ -115,14 +124,14 @@ def normalize_wazuh(raw):
 
     return {
         "source": "wazuh",
-        "rule_id": str(rule.get("id")) if rule.get("id") is not None else None,
-        "rule_desc": rule.get("description"),
+        "rule_id": _to_str(rule.get("id")),
+        "rule_desc": _to_str(rule.get("description")),
         "rule_level": level,
         "severity_detail": f"Wazuh rule level {level} of 15",
-        "src_ip": src_ip,
-        "src_user": _first(data.get("srcuser"), data.get("dstuser"), data.get("user")),
-        "target": target,
-        "file_hash": file_hash,
+        "src_ip": _to_str(src_ip),
+        "src_user": _to_str(_first(data.get("srcuser"), data.get("dstuser"), data.get("user"))),
+        "target": _to_str(target),
+        "file_hash": _to_str(file_hash),
         "timestamp": raw.get("timestamp"),
         "raw": raw,
     }
@@ -159,14 +168,14 @@ def normalize_suricata(raw):
 
     return {
         "source": "suricata",
-        "rule_id": str(sig_id) if sig_id is not None else None,
-        "rule_desc": _first(alert.get("signature"), alert.get("category")),
+        "rule_id": _to_str(sig_id),
+        "rule_desc": _to_str(_first(alert.get("signature"), alert.get("category"))),
         "rule_level": level,
         "severity_detail": f"Suricata severity {severity} (1=highest, 3=lowest) -> level {level} of 15",
-        "src_ip": raw.get("src_ip"),
+        "src_ip": _to_str(raw.get("src_ip")),
         "src_user": None,
-        "target": _first(raw.get("dest_ip"), raw.get("host")),
-        "file_hash": _first(fileinfo.get("sha256"), fileinfo.get("md5")),
+        "target": _to_str(_first(raw.get("dest_ip"), raw.get("host"))),
+        "file_hash": _to_str(_first(fileinfo.get("sha256"), fileinfo.get("md5"))),
         "timestamp": raw.get("timestamp"),
         "raw": raw,
     }
@@ -216,14 +225,14 @@ def normalize_elastic(raw):
 
     return {
         "source": "elastic",
-        "rule_id": str(rule_id) if rule_id is not None else None,
-        "rule_desc": _first(rule.get("description"), rule.get("name")),
+        "rule_id": _to_str(rule_id),
+        "rule_desc": _to_str(_first(rule.get("description"), rule.get("name"))),
         "rule_level": level,
         "severity_detail": severity_detail,
-        "src_ip": source.get("ip"),
-        "src_user": user.get("name"),
-        "target": _first(host.get("name"), destination.get("ip")),
-        "file_hash": _first(file_hash.get("sha256"), file_hash.get("md5"), file_hash.get("sha1")),
+        "src_ip": _to_str(source.get("ip")),
+        "src_user": _to_str(user.get("name")),
+        "target": _to_str(_first(host.get("name"), destination.get("ip"))),
+        "file_hash": _to_str(_first(file_hash.get("sha256"), file_hash.get("md5"), file_hash.get("sha1"))),
         "timestamp": raw.get("@timestamp"),
         "raw": raw,
     }
@@ -273,13 +282,13 @@ def normalize_guardduty(raw):
 
     return {
         "source": "guardduty",
-        "rule_id": raw.get("type"),
-        "rule_desc": _first(raw.get("title"), raw.get("description")),
+        "rule_id": _to_str(raw.get("type")),
+        "rule_desc": _to_str(_first(raw.get("title"), raw.get("description"))),
         "rule_level": level,
         "severity_detail": f"GuardDuty severity {severity:g} of 8.9 -> level {level} of 15",
-        "src_ip": _guardduty_remote_ip(raw),
-        "src_user": access_key_user,
-        "target": _first(instance_id, raw.get("accountId")),
+        "src_ip": _to_str(_guardduty_remote_ip(raw)),
+        "src_user": _to_str(access_key_user),
+        "target": _to_str(_first(instance_id, raw.get("accountId"))),
         "file_hash": None,
         "timestamp": _first(raw.get("updatedAt"), raw.get("createdAt")),
         "raw": raw,
@@ -328,14 +337,14 @@ def normalize_m365(raw):
 
     return {
         "source": "m365",
-        "rule_id": str(category) if category is not None else None,
-        "rule_desc": _first(raw.get("title"), raw.get("description")),
+        "rule_id": _to_str(category),
+        "rule_desc": _to_str(_first(raw.get("title"), raw.get("description"))),
         "rule_level": level,
         "severity_detail": severity_detail,
-        "src_ip": src_ip,
-        "src_user": _first(user.get("userPrincipalName"), user.get("accountName")),
-        "target": _first(host.get("fqdn"), host.get("netBiosName")),
-        "file_hash": file_hash.get("hashValue"),
+        "src_ip": _to_str(src_ip),
+        "src_user": _to_str(_first(user.get("userPrincipalName"), user.get("accountName"))),
+        "target": _to_str(_first(host.get("fqdn"), host.get("netBiosName"))),
+        "file_hash": _to_str(file_hash.get("hashValue")),
         "timestamp": _first(raw.get("eventDateTime"), raw.get("createdDateTime")),
         "raw": raw,
     }
@@ -368,14 +377,14 @@ def normalize_generic(raw):
 
     return {
         "source": "generic",
-        "rule_id": str(rule_id) if rule_id is not None else None,
-        "rule_desc": get("rule_desc"),
+        "rule_id": _to_str(rule_id),
+        "rule_desc": _to_str(get("rule_desc")),
         "rule_level": level,
         "severity_detail": severity_detail,
-        "src_ip": get("src_ip"),
-        "src_user": get("src_user"),
-        "target": get("target"),
-        "file_hash": get("file_hash"),
+        "src_ip": _to_str(get("src_ip")),
+        "src_user": _to_str(get("src_user")),
+        "target": _to_str(get("target")),
+        "file_hash": _to_str(get("file_hash")),
         "timestamp": get("timestamp"),
         "raw": raw,
     }
