@@ -345,3 +345,49 @@ SIFT_WEBHOOK_TOKEN = os.environ.get("SIFT_WEBHOOK_TOKEN", "")
 # ---------------------------------------------------------------------------
 SESSION_MAX_HOURS = int(os.environ.get("SIFT_SESSION_HOURS", "24"))
 SESSION_SECRET = os.environ.get("SIFT_SESSION_SECRET", _secrets.token_hex(32))
+
+# ---------------------------------------------------------------------------
+# Development no-auth mode.
+# In production, sift requires at least one user account before it will serve
+# authenticated routes. Set SIFT_DEV_NO_AUTH=1 only for demos where you want
+# the "no users yet = admin bypass" convenience without creating an account.
+# Never set this in production.
+# ---------------------------------------------------------------------------
+SIFT_DEV_NO_AUTH = os.environ.get("SIFT_DEV_NO_AUTH", "0") == "1"
+
+# ---------------------------------------------------------------------------
+# Secure cookie flag.
+# When enabled (the default), the session cookie is sent with the Secure
+# attribute so browsers only transmit it over HTTPS. Disable only for local
+# HTTP testing (SIFT_COOKIE_SECURE=0).
+# ---------------------------------------------------------------------------
+SIFT_COOKIE_SECURE = os.environ.get("SIFT_COOKIE_SECURE", "1") == "1"
+
+# ---------------------------------------------------------------------------
+# Raw-JSON redaction and retention.
+# When SIFT_REDACT_RAW=1, sensitive keys are stripped from the stored raw_json
+# before the alert is written to the DB (normalized fields and the receipt are
+# always kept). SIFT_RAW_RETENTION_DAYS sets how many days raw_json is kept
+# before it is replaced with a redacted placeholder; 0 disables expiry.
+# ---------------------------------------------------------------------------
+SIFT_REDACT_RAW = os.environ.get("SIFT_REDACT_RAW", "0") == "1"
+SIFT_RAW_RETENTION_DAYS = int(os.environ.get("SIFT_RAW_RETENTION_DAYS", "30"))
+
+# Keys whose values are redacted when SIFT_REDACT_RAW=1.
+RAW_REDACT_KEYS = {
+    "authorization", "cookie", "session", "password", "token",
+    "secret", "api_key", "access_key", "apikey", "passwd",
+    "credential", "credentials", "private_key",
+}
+
+# ---------------------------------------------------------------------------
+# Rate limiting (in-memory, resets on restart).
+# Login: at most RATE_LIMIT_LOGIN_MAX failures per RATE_LIMIT_LOGIN_WINDOW_S
+# seconds per source IP before returning 429.
+# Webhook: at most RATE_LIMIT_WEBHOOK_MAX requests per
+# RATE_LIMIT_WEBHOOK_WINDOW_S seconds per source IP.
+# ---------------------------------------------------------------------------
+RATE_LIMIT_LOGIN_MAX = int(os.environ.get("SIFT_LOGIN_RATE_MAX", "5"))
+RATE_LIMIT_LOGIN_WINDOW_S = int(os.environ.get("SIFT_LOGIN_RATE_WINDOW", "300"))
+RATE_LIMIT_WEBHOOK_MAX = int(os.environ.get("SIFT_WEBHOOK_RATE_MAX", "120"))
+RATE_LIMIT_WEBHOOK_WINDOW_S = int(os.environ.get("SIFT_WEBHOOK_RATE_WINDOW", "60"))

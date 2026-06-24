@@ -6,27 +6,42 @@ import urllib.parse
 import config
 from ..storage import db
 from ..ui import views
+from .. import ratelimit
 from ._utils import _parse_filter, _filter_qs, _neighbor_ids
+
+
+def _cookie_attrs(token, max_age):
+    base = f"sift_session={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}"
+    if config.SIFT_COOKIE_SECURE:
+        base += "; Secure"
+    return base
 
 
 def handle_login(h):
     body = h._read_body()
     if body is None:
         return h._send_json(413, {"error": "request body too large"})
+
+    client_ip = h.client_address[0]
+    if not ratelimit.check_login(client_ip):
+        db.log_event(0, "login_rate_limited", actor=client_ip)
+        return h._send(429, views.render_login(error="Too many failed attempts. Please wait before trying again."))
+
     form = urllib.parse.parse_qs(body.decode("utf-8"))
     username = form.get("username", [""])[0].strip()
     password = form.get("password", [""])[0]
     user = db.verify_user(username, password)
     if user is None:
+        ratelimit.record_login_failure(client_ip)
+        db.log_event(0, "login_failed", actor=client_ip, new_value=username)
         return h._send(200, views.render_login(error="Invalid username or password."))
+
+    db.log_event(0, "login_success", actor=username)
     sess = db.create_session(user["username"])
     max_age = config.SESSION_MAX_HOURS * 3600
     h.send_response(303)
     h.send_header("Location", "/")
-    h.send_header(
-        "Set-Cookie",
-        f"sift_session={sess['token']}; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}",
-    )
+    h.send_header("Set-Cookie", _cookie_attrs(sess["token"], max_age))
     h.end_headers()
 
 
@@ -36,7 +51,7 @@ def handle_logout(h):
     db.delete_session(token)
     h.send_response(303)
     h.send_header("Location", "/login")
-    h.send_header("Set-Cookie", "sift_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0")
+    h.send_header("Set-Cookie", _cookie_attrs("", 0))
     h.end_headers()
 
 
