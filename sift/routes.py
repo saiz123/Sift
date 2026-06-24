@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler
 import config
 from .storage import db
 from .ui import views
+from . import ratelimit
 from .handlers.dashboard import handle_dashboard, handle_alert_detail, handle_cases, handle_case
 from .handlers.webhooks import WEBHOOK_NORMALIZERS, handle_ingest
 from .handlers.feedback import (
@@ -56,8 +57,12 @@ class Handler(BaseHTTPRequestHandler):
 
     # --- auth helpers -----------------------------------------------------
     def _require_auth(self):
-        if not db.has_any_user():
+        if not db.has_any_user() and config.SIFT_DEV_NO_AUTH:
             return {"username": None, "role": "admin", "csrf_token": ""}
+        if not db.has_any_user() and not config.SIFT_DEV_NO_AUTH:
+            # No users yet and dev mode is off — redirect to login to create first account.
+            self._redirect("/login")
+            return None
         token = _parse_session_cookie(self.headers)
         sess = db.get_session(token)
         if sess is None:
@@ -133,8 +138,12 @@ class Handler(BaseHTTPRequestHandler):
         if normalize_fn:
             if config.SIFT_WEBHOOK_TOKEN:
                 incoming = self.headers.get("X-Sift-Webhook-Token", "")
-                if incoming != config.SIFT_WEBHOOK_TOKEN:
+                if not hmac.compare_digest(incoming, config.SIFT_WEBHOOK_TOKEN):
                     return self._send_json(401, {"error": "invalid or missing X-Sift-Webhook-Token"})
+            client_ip = self.client_address[0]
+            if not ratelimit.check_webhook(client_ip):
+                db.log_event(0, "webhook_rate_limited", actor=client_ip)
+                return self._send_json(429, {"error": "rate limit exceeded — slow down webhook requests"})
             return handle_ingest(self, normalize_fn)
 
         m = re.fullmatch(r"/alert/(\d+)/feedback", path)

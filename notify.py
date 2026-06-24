@@ -22,17 +22,35 @@ import urllib.request
 import config
 
 
+def _log_outcome(alert_id, destination, success, detail=""):
+    """Write a notification_sent or notification_failed audit event."""
+    try:
+        from sift.storage import db
+        event_type = "notification_sent" if success else "notification_failed"
+        db.log_event(alert_id, event_type, actor="notify", new_value=f"{destination}: {detail}" if detail else destination)
+    except Exception:
+        pass
+
+
 def notify_escalation(alert_id, alert, score, receipt):
     if config.ESCALATE_WEBHOOK_URL:
         text = _format_message(alert_id, alert, score, receipt)
         threading.Thread(
-            target=_post_chat, args=(config.ESCALATE_WEBHOOK_URL, text), daemon=True
+            target=_post_chat, args=(alert_id, config.ESCALATE_WEBHOOK_URL, text), daemon=True
         ).start()
     if config.THEHIVE_URL and config.THEHIVE_API_KEY:
         threading.Thread(
             target=_post_thehive, args=(alert_id, alert, score, receipt), daemon=True
         ).start()
     if config.SERVICENOW_INSTANCE and config.SERVICENOW_USER and config.SERVICENOW_PASSWORD:
+        if not config.SERVICENOW_INSTANCE.startswith("https://"):
+            print(
+                "  [notify] ServiceNow: SERVICENOW_INSTANCE is not https — "
+                "refusing to send Basic credentials over plain HTTP",
+                file=sys.stderr,
+            )
+            _log_outcome(alert_id, "servicenow", False, "non-HTTPS instance rejected")
+            return
         threading.Thread(
             target=_post_servicenow, args=(alert_id, alert, score, receipt), daemon=True
         ).start()
@@ -55,7 +73,7 @@ def _format_message(alert_id, alert, score, receipt):
     )
 
 
-def _post_chat(url, text):
+def _post_chat(alert_id, url, text):
     # "text" is read by Slack/Mattermost, "content" by Discord — send both so
     # the same URL works with either, harmlessly ignored by the other.
     body = json.dumps({"text": text, "content": text}).encode("utf-8")
@@ -64,8 +82,10 @@ def _post_chat(url, text):
     )
     try:
         urllib.request.urlopen(req, timeout=5)
+        _log_outcome(alert_id, "chat", True)
     except Exception as exc:
         print(f"  [notify] chat webhook failed: {exc!r}", file=sys.stderr)
+        _log_outcome(alert_id, "chat", False, str(exc))
 
 
 def _thehive_severity(score):
@@ -122,8 +142,10 @@ def _post_thehive(alert_id, alert, score, receipt):
     )
     try:
         urllib.request.urlopen(req, timeout=5)
+        _log_outcome(alert_id, "thehive", True)
     except Exception as exc:
         print(f"  [notify] TheHive create-alert failed: {exc!r}", file=sys.stderr)
+        _log_outcome(alert_id, "thehive", False, str(exc))
 
 
 def _snow_urgency(score):
