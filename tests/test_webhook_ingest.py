@@ -24,6 +24,7 @@ def _start_server():
     tmp.close()
     cfg.DB_PATH = tmp.name
     cfg.SIFT_WEBHOOK_TOKEN = ""  # no token by default
+    cfg.SIFT_DEV_NO_AUTH = True  # no users in test DB — skip auth gate
 
     from sift.storage import db
     db.init_db()
